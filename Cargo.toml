@@ -1,0 +1,65 @@
+[package]
+name = "uxc"
+version = "0.1.0"
+edition = "2021"
+authors = ["UXC Contributors"]
+description = "Universal X-Protocol Call - Schema-driven multi-protocol RPC execution runtime"
+license = "MIT"
+repository = "https://github.com/your-org/uxc"
+readme = "README.md"
+keywords = ["rpc", "cli", "openapi", "grpc", "mcp"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# CLI Framework
+clap = { version = "4.4", features = ["derive"] }
+clap_complete = "4.4"
+
+# HTTP Client
+reqwest = { version = "0.11", features = ["json"] }
+
+# JSON/Serde
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async Runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# OpenAPI Support
+openapiv3 = "1.0"
+
+# GraphQL Support
+graphql_client = "0.13"
+
+# gRPC Support
+tonic = "0.10"
+prost = "0.12"
+
+# MCP Support (placeholder - adjust as needed)
+# mcp-sdk = "0.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.2"
+
+[[bin]]
+name = "uxc"
+path = "src/main.rs"
+
+[lib]
+name = "uxc"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
