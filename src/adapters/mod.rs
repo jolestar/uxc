@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Enum of all available adapters
 pub enum AdapterEnum {
@@ -164,41 +165,160 @@ pub trait Adapter: Send + Sync {
     ) -> Result<ExecutionResult>;
 }
 
-/// Protocol detector - attempts to identify the protocol type
-pub struct ProtocolDetector;
+/// Protocol detector - attempts to identify the protocol type with parallel detection
+pub struct ProtocolDetector {
+    /// Timeout for each protocol detection attempt
+    timeout: Duration,
+}
 
 impl ProtocolDetector {
     pub fn new() -> Self {
-        Self
+        Self {
+            // Default timeout per protocol check: 500ms
+            // Total max detection time for 4 protocols = ~2 seconds
+            timeout: Duration::from_millis(500),
+        }
+    }
+
+    /// Create a detector with custom timeout
+    pub fn with_timeout(timeout_ms: u64) -> Self {
+        Self {
+            timeout: Duration::from_millis(timeout_ms),
+        }
     }
 
     /// Get adapter for a URL (auto-detects protocol)
     pub async fn detect_adapter(&self, url: &str) -> Result<AdapterEnum> {
-        // Try OpenAPI first
+        // Try all protocols in parallel for fast detection
+        // Use tokio::spawn for parallel execution with timeout
+
+        let openapi_task = tokio::spawn({
+            let url = url.to_string();
+            async move {
+                let adapter = openapi::OpenAPIAdapter::new();
+                let can_handle = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    adapter.can_handle(&url)
+                ).await;
+                match can_handle {
+                    Ok(Ok(true)) => Some(AdapterEnum::OpenAPI(adapter)),
+                    _ => None,
+                }
+            }
+        });
+
+        let grpc_task = tokio::spawn({
+            let url = url.to_string();
+            async move {
+                let adapter = grpc::GrpcAdapter::new();
+                let can_handle = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    adapter.can_handle(&url)
+                ).await;
+                match can_handle {
+                    Ok(Ok(true)) => Some(AdapterEnum::gRPC(adapter)),
+                    _ => None,
+                }
+            }
+        });
+
+        let mcp_task = tokio::spawn({
+            let url = url.to_string();
+            async move {
+                let adapter = mcp::McpAdapter::new();
+                let can_handle = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    adapter.can_handle(&url)
+                ).await;
+                match can_handle {
+                    Ok(Ok(true)) => Some(AdapterEnum::MCP(adapter)),
+                    _ => None,
+                }
+            }
+        });
+
+        let graphql_task = tokio::spawn({
+            let url = url.to_string();
+            async move {
+                let adapter = graphql::GraphQLAdapter::new();
+                let can_handle = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    adapter.can_handle(&url)
+                ).await;
+                match can_handle {
+                    Ok(Ok(true)) => Some(AdapterEnum::GraphQL(adapter)),
+                    _ => None,
+                }
+            }
+        });
+
+        // Yield to let tasks start
+        tokio::task::yield_now().await;
+
+        // Check results in priority order
+        // OpenAPI first (most common), then GraphQL, MCP, gRPC
+        if let Ok(Some(adapter)) = openapi_task.await {
+            return Ok(adapter);
+        }
+
+        if let Ok(Some(adapter)) = graphql_task.await {
+            return Ok(adapter);
+        }
+
+        if let Ok(Some(adapter)) = mcp_task.await {
+            return Ok(adapter);
+        }
+
+        if let Ok(Some(adapter)) = grpc_task.await {
+            return Ok(adapter);
+        }
+
+        // If parallel detection didn't work, fall back to sequential with timeout
+        // This is more reliable but slower
         let openapi_adapter = openapi::OpenAPIAdapter::new();
-        if openapi_adapter.can_handle(url).await? {
+        if tokio::time::timeout(self.timeout, openapi_adapter.can_handle(&url)).await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false) {
             return Ok(AdapterEnum::OpenAPI(openapi_adapter));
         }
 
-        // Try gRPC
-        let grpc_adapter = grpc::GrpcAdapter::new();
-        if grpc_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::gRPC(grpc_adapter));
-        }
-
-        // Try MCP
-        let mcp_adapter = mcp::McpAdapter::new();
-        if mcp_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::MCP(mcp_adapter));
-        }
-
-        // Try GraphQL
         let graphql_adapter = graphql::GraphQLAdapter::new();
-        if graphql_adapter.can_handle(url).await? {
+        if tokio::time::timeout(self.timeout, graphql_adapter.can_handle(&url)).await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false) {
             return Ok(AdapterEnum::GraphQL(graphql_adapter));
         }
 
-        Err(anyhow::anyhow!("No adapter found for URL: {}", url))
+        let mcp_adapter = mcp::McpAdapter::new();
+        if tokio::time::timeout(self.timeout, mcp_adapter.can_handle(&url)).await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false) {
+            return Ok(AdapterEnum::MCP(mcp_adapter));
+        }
+
+        let grpc_adapter = grpc::GrpcAdapter::new();
+        if tokio::time::timeout(self.timeout, grpc_adapter.can_handle(&url)).await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false) {
+            return Ok(AdapterEnum::gRPC(grpc_adapter));
+        }
+
+        Err(anyhow::anyhow!(
+            "Unable to detect protocol for URL: {}. \
+            Tried: OpenAPI, GraphQL, MCP, gRPC. \
+            Ensure the endpoint exposes one of these protocols with discovery enabled.",
+            url
+        ))
+    }
+
+    /// Detect protocol type without returning adapter
+    pub async fn detect_protocol_type(&self, url: &str) -> Result<ProtocolType> {
+        let adapter = self.detect_adapter(url).await?;
+        Ok(adapter.protocol_type())
     }
 }
 

@@ -31,20 +31,51 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try common OpenAPI endpoints
+        // Try common OpenAPI endpoints with short timeout for fast detection
         let endpoints = [
             "/openapi.json",
             "/swagger.json",
             "/api-docs",
             "/swagger/v1/swagger.json",
+            "/api/docs",
+            "/docs/swagger.json",
         ];
+
+        // Create client with short timeout for detection
+        let timeout_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()?;
 
         for endpoint in endpoints {
             let full_url = format!("{}{}", url.trim_end_matches('/'), endpoint);
-            if let Ok(resp) = self.client.get(&full_url).send().await {
-                if resp.status().is_success() {
-                    return Ok(true);
+
+            match timeout_client.get(&full_url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        // Additional validation: check if response looks like OpenAPI
+                        if let Some(content_type) = resp.headers().get("content-type") {
+                            if let Ok(ct) = content_type.to_str() {
+                                if ct.contains("json") {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                        // Try to parse as JSON to verify it's valid
+                        if let Ok(text) = resp.text().await {
+                            if serde_json::from_str::<serde_json::Value>(&text).is_ok() {
+                                // Check for OpenAPI-specific fields
+                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    if value.get("openapi").is_some()
+                                        || value.get("swagger").is_some()
+                                        || value.get("paths").is_some() {
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+                Err(_) => continue, // Try next endpoint on error
             }
         }
 
