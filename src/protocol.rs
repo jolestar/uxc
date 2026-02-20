@@ -1,9 +1,7 @@
 //! Protocol detection and routing
 
-use crate::adapters::{Adapter, ProtocolDetector, ProtocolType};
+use crate::adapters::{Adapter, ProtocolDetector, ProtocolType, AdapterEnum};
 use crate::error::{Result, UxcError};
-use std::collections::HashMap;
-use serde_json::Value;
 
 /// Protocol detector and router
 pub struct ProtocolRouter {
@@ -19,18 +17,15 @@ impl ProtocolRouter {
 
     /// Detect protocol for a given URL
     pub async fn detect_protocol(&self, url: &str) -> Result<ProtocolType> {
-        self.detector
-            .detect(url)
-            .await?
-            .ok_or_else(|| UxcError::ProtocolDetectionFailed(url.to_string()))
+        let adapter = self.detector.detect_adapter(url).await
+            .map_err(|e| UxcError::GenericError(e))?;
+        Ok(adapter.protocol_type())
     }
 
     /// Get adapter for a URL (auto-detects protocol)
-    pub async fn get_adapter_for_url(&self, url: &str) -> Result<&dyn Adapter> {
-        let protocol = self.detect_protocol(url).await?;
-        self.detector
-            .get_adapter(protocol)
-            .ok_or_else(|| UxcError::UnsupportedProtocol(protocol.as_str().to_string()))
+    pub async fn get_adapter_for_url(&self, url: &str) -> Result<AdapterEnum> {
+        self.detector.detect_adapter(url).await
+            .map_err(|e| UxcError::GenericError(e))
     }
 }
 

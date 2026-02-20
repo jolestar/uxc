@@ -14,6 +14,77 @@ pub mod graphql;
 use serde_json::Value;
 use std::collections::HashMap;
 use anyhow::Result;
+use async_trait::async_trait;
+
+/// Enum of all available adapters
+pub enum AdapterEnum {
+    OpenAPI(openapi::OpenAPIAdapter),
+    gRPC(grpc::GrpcAdapter),
+    MCP(mcp::McpAdapter),
+    GraphQL(graphql::GraphQLAdapter),
+}
+
+#[async_trait]
+impl Adapter for AdapterEnum {
+    fn protocol_type(&self) -> ProtocolType {
+        match self {
+            AdapterEnum::OpenAPI(_) => ProtocolType::OpenAPI,
+            AdapterEnum::gRPC(_) => ProtocolType::gRPC,
+            AdapterEnum::MCP(_) => ProtocolType::MCP,
+            AdapterEnum::GraphQL(_) => ProtocolType::GraphQL,
+        }
+    }
+
+    async fn can_handle(&self, url: &str) -> Result<bool> {
+        match self {
+            AdapterEnum::OpenAPI(a) => a.can_handle(url).await,
+            AdapterEnum::gRPC(a) => a.can_handle(url).await,
+            AdapterEnum::MCP(a) => a.can_handle(url).await,
+            AdapterEnum::GraphQL(a) => a.can_handle(url).await,
+        }
+    }
+
+    async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        match self {
+            AdapterEnum::OpenAPI(a) => a.fetch_schema(url).await,
+            AdapterEnum::gRPC(a) => a.fetch_schema(url).await,
+            AdapterEnum::MCP(a) => a.fetch_schema(url).await,
+            AdapterEnum::GraphQL(a) => a.fetch_schema(url).await,
+        }
+    }
+
+    async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
+        match self {
+            AdapterEnum::OpenAPI(a) => a.list_operations(url).await,
+            AdapterEnum::gRPC(a) => a.list_operations(url).await,
+            AdapterEnum::MCP(a) => a.list_operations(url).await,
+            AdapterEnum::GraphQL(a) => a.list_operations(url).await,
+        }
+    }
+
+    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+        match self {
+            AdapterEnum::OpenAPI(a) => a.operation_help(url, operation).await,
+            AdapterEnum::gRPC(a) => a.operation_help(url, operation).await,
+            AdapterEnum::MCP(a) => a.operation_help(url, operation).await,
+            AdapterEnum::GraphQL(a) => a.operation_help(url, operation).await,
+        }
+    }
+
+    async fn execute(
+        &self,
+        url: &str,
+        operation: &str,
+        args: HashMap<String, Value>,
+    ) -> Result<ExecutionResult> {
+        match self {
+            AdapterEnum::OpenAPI(a) => a.execute(url, operation, args).await,
+            AdapterEnum::gRPC(a) => a.execute(url, operation, args).await,
+            AdapterEnum::MCP(a) => a.execute(url, operation, args).await,
+            AdapterEnum::GraphQL(a) => a.execute(url, operation, args).await,
+        }
+    }
+}
 
 /// Supported protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,38 +165,40 @@ pub trait Adapter: Send + Sync {
 }
 
 /// Protocol detector - attempts to identify the protocol type
-pub struct ProtocolDetector {
-    adapters: Vec<Box<dyn Adapter>>,
-}
+pub struct ProtocolDetector;
 
 impl ProtocolDetector {
     pub fn new() -> Self {
-        Self {
-            adapters: vec![
-                Box::new(openapi::OpenAPIAdapter::new()),
-                Box::new(grpc::GrpcAdapter::new()),
-                Box::new(mcp::McpAdapter::new()),
-                Box::new(graphql::GraphQLAdapter::new()),
-            ],
-        }
+        Self
     }
 
-    /// Detect protocol type for a given URL
-    pub async fn detect(&self, url: &str) -> Result<Option<ProtocolType>> {
-        for adapter in &self.adapters {
-            if adapter.can_handle(url).await? {
-                return Ok(Some(adapter.protocol_type()));
-            }
+    /// Get adapter for a URL (auto-detects protocol)
+    pub async fn detect_adapter(&self, url: &str) -> Result<AdapterEnum> {
+        // Try OpenAPI first
+        let openapi_adapter = openapi::OpenAPIAdapter::new();
+        if openapi_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::OpenAPI(openapi_adapter));
         }
-        Ok(None)
-    }
 
-    /// Get adapter for a specific protocol type
-    pub fn get_adapter(&self, protocol: ProtocolType) -> Option<&dyn Adapter> {
-        self.adapters
-            .iter()
-            .find(|a| a.protocol_type() == protocol)
-            .map(|a| a.as_ref())
+        // Try gRPC
+        let grpc_adapter = grpc::GrpcAdapter::new();
+        if grpc_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::gRPC(grpc_adapter));
+        }
+
+        // Try MCP
+        let mcp_adapter = mcp::McpAdapter::new();
+        if mcp_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::MCP(mcp_adapter));
+        }
+
+        // Try GraphQL
+        let graphql_adapter = graphql::GraphQLAdapter::new();
+        if graphql_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::GraphQL(graphql_adapter));
+        }
+
+        Err(anyhow::anyhow!("No adapter found for URL: {}", url))
     }
 }
 

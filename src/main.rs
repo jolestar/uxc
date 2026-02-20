@@ -2,6 +2,12 @@ use clap::{Parser, Subcommand};
 use anyhow::Result;
 use tracing::{info, error};
 
+mod adapters;
+mod output;
+
+use adapters::{Adapter, ProtocolDetector, AdapterEnum};
+use output::OutputEnvelope;
+
 #[derive(Parser)]
 #[command(name = "uxc")]
 #[command(about = "Universal X-Protocol Call", long_about = None)]
@@ -85,25 +91,91 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_list(url: &str, verbose: bool) -> Result<()> {
-    println!("Listing operations for {}", url);
-    // TODO: Implement protocol detection and schema retrieval
+    let detector = ProtocolDetector::new();
+    let adapter = detector.detect_adapter(url).await?;
+
+    if verbose {
+        println!("Detected protocol: {:?}\n", adapter.protocol_type());
+    }
+
+    let operations = adapter.list_operations(url).await?;
+
+    for op in operations {
+        println!("{}", op.name);
+        if verbose {
+            if let Some(desc) = &op.description {
+                println!("  {}", desc);
+            }
+            if !op.parameters.is_empty() {
+                println!("  Parameters:");
+                for param in &op.parameters {
+                    println!("    - {} ({}){}", param.name, param.param_type,
+                        if param.required { " required" } else { "" });
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
 async fn handle_call(url: &str, operation: &str, args: Vec<String>, json: Option<String>) -> Result<()> {
-    println!("Calling {} on {}", operation, url);
-    // TODO: Implement operation execution
+    let detector = ProtocolDetector::new();
+    let adapter = detector.detect_adapter(url).await?;
+
+    // Parse arguments
+    let mut args_map = std::collections::HashMap::new();
+    if let Some(json_str) = json {
+        let value: serde_json::Value = serde_json::from_str(&json_str)?;
+        if let Some(obj) = value.as_object() {
+            for (k, v) in obj {
+                args_map.insert(k.clone(), v.clone());
+            }
+        }
+    } else {
+        for arg in args {
+            let parts: Vec<&str> = arg.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                args_map.insert(parts[0].to_string(), serde_json::json!(parts[1]));
+            }
+        }
+    }
+
+    let result = adapter.execute(url, operation, args_map).await?;
+
+    // Output deterministic JSON envelope
+    let envelope = OutputEnvelope::success(
+        adapter.protocol_type().as_str(),
+        url,
+        operation,
+        result.data,
+        result.metadata.duration_ms,
+    );
+
+    println!("{}", envelope.to_json()?);
     Ok(())
 }
 
 async fn handle_help(url: &str, operation: &str) -> Result<()> {
-    println!("Showing help for {} on {}", operation, url);
-    // TODO: Implement operation help
+    let detector = ProtocolDetector::new();
+    let adapter = detector.detect_adapter(url).await?;
+
+    let help_text = adapter.operation_help(url, operation).await?;
+    println!("{}", help_text);
     Ok(())
 }
 
 async fn handle_inspect(url: &str, full: bool) -> Result<()> {
-    println!("Inspecting {}", url);
-    // TODO: Implement endpoint inspection
+    let detector = ProtocolDetector::new();
+    let adapter = detector.detect_adapter(url).await?;
+
+    println!("Protocol: {:?}", adapter.protocol_type());
+    println!("Endpoint: {}", url);
+
+    if full {
+        let schema = adapter.fetch_schema(url).await?;
+        println!("\nSchema:\n{}", serde_json::to_string_pretty(&schema)?);
+    }
+
     Ok(())
 }

@@ -32,4 +32,7 @@ pub enum UxcError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+
+    #[error("Generic error: {0}")]
+    GenericError(#[from] anyhow::Error),
 }
