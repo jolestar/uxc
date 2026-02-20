@@ -4,7 +4,10 @@ use super::{Adapter, ProtocolType, Operation, Parameter, ExecutionResult, Execut
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
 use anyhow::Result;
+
+const DETECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct OpenAPIAdapter {
     client: reqwest::Client,
@@ -13,7 +16,10 @@ pub struct OpenAPIAdapter {
 impl OpenAPIAdapter {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(DETECTION_TIMEOUT)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 }
@@ -31,19 +37,41 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try common OpenAPI endpoints
+        // Try common OpenAPI endpoints with timeout
         let endpoints = [
             "/openapi.json",
             "/swagger.json",
             "/api-docs",
             "/swagger/v1/swagger.json",
+            "/api/docs",
+            "/docs/swagger.json",
         ];
 
+        let base_url = url.trim_end_matches('/');
+
         for endpoint in endpoints {
-            let full_url = format!("{}{}", url.trim_end_matches('/'), endpoint);
-            if let Ok(resp) = self.client.get(&full_url).send().await {
+            let full_url = format!("{}{}", base_url, endpoint);
+
+            // Use timeout for each endpoint probe
+            let result = tokio::time::timeout(
+                DETECTION_TIMEOUT,
+                self.client.get(&full_url).send()
+            ).await;
+
+            if let Ok(Ok(resp)) = result {
                 if resp.status().is_success() {
-                    return Ok(true);
+                    // Verify it's actually JSON and has OpenAPI fields
+                    if let Ok(text) = resp.text().await {
+                        if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                            // Check for OpenAPI/Swagger identifiers
+                            if value.get("openapi").is_some()
+                                || value.get("swagger").is_some()
+                                || value.get("paths").is_some()
+                            {
+                                return Ok(true);
+                            }
+                        }
+                    }
                 }
             }
         }

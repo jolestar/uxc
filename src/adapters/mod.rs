@@ -13,6 +13,7 @@ pub mod graphql;
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
 use anyhow::Result;
 
 /// Supported protocol types
@@ -110,14 +111,42 @@ impl ProtocolDetector {
         }
     }
 
-    /// Detect protocol type for a given URL
+    /// Detect protocol type for a given URL using parallel detection
+    /// Returns the first protocol that successfully handles the URL
     pub async fn detect(&self, url: &str) -> Result<Option<ProtocolType>> {
-        for adapter in &self.adapters {
-            if adapter.can_handle(url).await? {
-                return Ok(Some(adapter.protocol_type()));
+        // Try all adapters in parallel for fast detection
+        // Use a 2-second timeout for the entire detection process
+        let detect_futures: Vec<_> = self.adapters.iter().map(|adapter| {
+            async move {
+                let result = adapter.can_handle(url).await;
+                match result {
+                    Ok(true) => Some(adapter.protocol_type()),
+                    _ => None,
+                }
+            }
+        }).collect();
+
+        // Run all detection checks in parallel with a timeout
+        let results = tokio::time::timeout(
+            Duration::from_secs(2),
+            futures::future::join_all(detect_futures)
+        ).await;
+
+        match results {
+            Ok(detected) => {
+                // Return the first successfully detected protocol
+                for protocol in detected {
+                    if protocol.is_some() {
+                        return Ok(protocol);
+                    }
+                }
+                Ok(None)
+            }
+            Err(_) => {
+                // Timeout - return error for unknown protocol
+                Ok(None)
             }
         }
-        Ok(None)
     }
 
     /// Get adapter for a specific protocol type

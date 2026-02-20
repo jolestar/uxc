@@ -1,10 +1,13 @@
 //! GraphQL adapter with introspection support
 
-use super::{Adapter, ProtocolType, Operation, Parameter, ExecutionResult, ExecutionMetadata};
+use super::{Adapter, ProtocolType, Operation, ExecutionResult, ExecutionMetadata};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
 use anyhow::Result;
+
+const DETECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct GraphQLAdapter {
     client: reqwest::Client,
@@ -13,7 +16,10 @@ pub struct GraphQLAdapter {
 impl GraphQLAdapter {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(DETECTION_TIMEOUT)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 }
@@ -31,8 +37,8 @@ impl Adapter for GraphQLAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try GraphQL introspection
-        let query = r#"
+        // Try GraphQL introspection with timeout
+        let introspection_query = r#"
             {
                 __schema {
                     queryType {
@@ -42,14 +48,29 @@ impl Adapter for GraphQLAdapter {
             }
         "#;
 
-        let resp = self
-            .client
-            .post(url)
-            .json(&serde_json::json!({ "query": query }))
-            .send()
-            .await?;
+        let result = tokio::time::timeout(
+            DETECTION_TIMEOUT,
+            self.client
+                .post(url)
+                .json(&serde_json::json!({ "query": introspection_query }))
+                .send()
+        ).await;
 
-        Ok(resp.status().is_success())
+        if let Ok(Ok(resp)) = result {
+            if resp.status().is_success() {
+                // Verify it's actually GraphQL by checking the response
+                if let Ok(json) = resp.json::<Value>().await {
+                    // Check for GraphQL-specific response structure
+                    if json.get("data").is_some()
+                        || json.get("errors").is_some()
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
@@ -84,8 +105,8 @@ impl Adapter for GraphQLAdapter {
 
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
         // For GraphQL, we expose the top-level query/mutation fields as operations
-        let schema = self.fetch_schema(url).await?;
-        let mut operations = Vec::new();
+        let _schema = self.fetch_schema(url).await?;
+        let operations = Vec::new();
 
         // TODO: Parse introspection result and extract fields
         // For now, return placeholder
@@ -95,6 +116,7 @@ impl Adapter for GraphQLAdapter {
 
     async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
         // TODO: Implement field help via introspection
+        let _ = (url, operation);
         Err(anyhow::anyhow!("GraphQL help not yet fully implemented"))
     }
 
@@ -102,7 +124,7 @@ impl Adapter for GraphQLAdapter {
         &self,
         url: &str,
         operation: &str,
-        args: HashMap<String, Value>,
+        _args: HashMap<String, Value>,
     ) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
 

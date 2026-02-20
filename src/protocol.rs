@@ -2,8 +2,6 @@
 
 use crate::adapters::{Adapter, ProtocolDetector, ProtocolType};
 use crate::error::{Result, UxcError};
-use std::collections::HashMap;
-use serde_json::Value;
 
 /// Protocol detector and router
 pub struct ProtocolRouter {
@@ -21,7 +19,8 @@ impl ProtocolRouter {
     pub async fn detect_protocol(&self, url: &str) -> Result<ProtocolType> {
         self.detector
             .detect(url)
-            .await?
+            .await
+            .map_err(|e| UxcError::ProtocolDetectionFailed(format!("{}: {}", url, e)))?
             .ok_or_else(|| UxcError::ProtocolDetectionFailed(url.to_string()))
     }
 
