@@ -1,10 +1,10 @@
 //! OpenAPI/Swagger adapter
 
-use super::{Adapter, ProtocolType, Operation, Parameter, ExecutionResult, ExecutionMetadata};
+use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use anyhow::Result;
 
 pub struct OpenAPIAdapter {
     client: reqwest::Client,
@@ -31,18 +31,44 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try common OpenAPI endpoints
+        // Try common OpenAPI endpoints with timeout
         let endpoints = [
             "/openapi.json",
             "/swagger.json",
             "/api-docs",
             "/swagger/v1/swagger.json",
+            "/api/docs",
+            "/docs/swagger.json",
+            "/swagger-docs",
         ];
 
         for endpoint in endpoints {
             let full_url = format!("{}{}", url.trim_end_matches('/'), endpoint);
-            if let Ok(resp) = self.client.get(&full_url).send().await {
-                if resp.status().is_success() {
+
+            let resp = match self
+                .client
+                .get(&full_url)
+                .timeout(std::time::Duration::from_secs(2))
+                .header("Accept", "application/json")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            if !resp.status().is_success() {
+                continue;
+            }
+
+            // Validate that the response is actually OpenAPI/Swagger JSON
+            if let Ok(body) = resp.json::<Value>().await {
+                // Check for OpenAPI 3.0+
+                if body.get("openapi").is_some() {
+                    return Ok(true);
+                }
+                // Check for Swagger 2.0
+                if body.get("swagger").is_some() {
                     return Ok(true);
                 }
             }

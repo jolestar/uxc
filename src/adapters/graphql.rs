@@ -1,10 +1,10 @@
 //! GraphQL adapter with introspection support
 
-use super::{Adapter, ProtocolType, Operation, Parameter, ExecutionResult, ExecutionMetadata};
+use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, ProtocolType};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use anyhow::Result;
 
 pub struct GraphQLAdapter {
     client: reqwest::Client,
@@ -31,7 +31,7 @@ impl Adapter for GraphQLAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try GraphQL introspection
+        // Try GraphQL introspection with timeout
         let query = r#"
             {
                 __schema {
@@ -42,14 +42,36 @@ impl Adapter for GraphQLAdapter {
             }
         "#;
 
-        let resp = self
+        let resp = match self
             .client
             .post(url)
+            .timeout(std::time::Duration::from_secs(2))
+            .header("Content-Type", "application/json")
             .json(&serde_json::json!({ "query": query }))
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Ok(false),
+        };
 
-        Ok(resp.status().is_success())
+        if !resp.status().is_success() {
+            return Ok(false);
+        }
+
+        // Check if response is valid GraphQL with __schema
+        if let Ok(body) = resp.json::<Value>().await {
+            // A valid GraphQL introspection response should have data.__schema
+            // or errors (which still indicates GraphQL)
+            if body.get("data").is_some()
+                || body.get("errors").is_some()
+                || body.get("__schema").is_some()
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
@@ -85,7 +107,7 @@ impl Adapter for GraphQLAdapter {
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
         // For GraphQL, we expose the top-level query/mutation fields as operations
         let schema = self.fetch_schema(url).await?;
-        let mut operations = Vec::new();
+        let operations = Vec::new();
 
         // TODO: Parse introspection result and extract fields
         // For now, return placeholder

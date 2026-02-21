@@ -1,6 +1,6 @@
 //! Protocol detection and routing
 
-use crate::adapters::{Adapter, ProtocolDetector, ProtocolType, AdapterEnum};
+use crate::adapters::{Adapter, AdapterEnum, ProtocolDetector, ProtocolType};
 use crate::error::{Result, UxcError};
 
 /// Protocol detector and router
@@ -17,15 +17,20 @@ impl ProtocolRouter {
 
     /// Detect protocol for a given URL
     pub async fn detect_protocol(&self, url: &str) -> Result<ProtocolType> {
-        let adapter = self.detector.detect_adapter(url).await
-            .map_err(|e| UxcError::GenericError(e))?;
+        let adapter = self
+            .detector
+            .detect_adapter(url)
+            .await
+            .map_err(UxcError::GenericError)?;
         Ok(adapter.protocol_type())
     }
 
     /// Get adapter for a URL (auto-detects protocol)
     pub async fn get_adapter_for_url(&self, url: &str) -> Result<AdapterEnum> {
-        self.detector.detect_adapter(url).await
-            .map_err(|e| UxcError::GenericError(e))
+        self.detector
+            .detect_adapter(url)
+            .await
+            .map_err(UxcError::GenericError)
     }
 }
 
