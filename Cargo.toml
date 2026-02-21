@@ -24,7 +24,9 @@ serde_json = "1.0"
 
 # Async Runtime
 tokio = { version = "1.35", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Error Handling
 anyhow = "1.0"
