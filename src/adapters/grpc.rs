@@ -1,10 +1,10 @@
 //! gRPC adapter with reflection support
 
-use super::{Adapter, ProtocolType, Operation, Parameter, ExecutionResult, ExecutionMetadata};
+use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use anyhow::Result;
 
 pub struct GrpcAdapter {
     client: reqwest::Client,

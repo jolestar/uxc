@@ -6,15 +6,15 @@
 //! - Operation discovery
 //! - Execution
 
-pub mod openapi;
+pub mod graphql;
 pub mod grpc;
 pub mod mcp;
-pub mod graphql;
+pub mod openapi;
 
-use serde_json::Value;
-use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Enum of all available adapters
 pub enum AdapterEnum {

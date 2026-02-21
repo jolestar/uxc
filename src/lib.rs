@@ -3,12 +3,12 @@
 //! Schema-driven, multi-protocol RPC execution runtime.
 
 pub mod adapters;
-pub mod protocol;
 pub mod error;
 pub mod output;
+pub mod protocol;
 
 pub use adapters::{Adapter, ProtocolType};
-pub use error::{UxcError, Result};
+pub use error::{Result, UxcError};
 pub use output::OutputEnvelope;
 
 /// UXC version

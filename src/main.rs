@@ -1,11 +1,11 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
-use tracing::{info, error};
+use clap::{Parser, Subcommand};
+use tracing::{error, info};
 
 mod adapters;
 mod output;
 
-use adapters::{Adapter, ProtocolDetector, AdapterEnum};
+use adapters::{Adapter, AdapterEnum, ProtocolDetector};
 use output::OutputEnvelope;
 
 #[derive(Parser)]
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into())
+                .add_directive(tracing::Level::INFO.into()),
         )
         .init();
 
@@ -75,7 +75,12 @@ async fn main() -> Result<()> {
         Commands::List { verbose } => {
             handle_list(&cli.url, verbose).await?;
         }
-        Commands::Call { operation, args, json, help } => {
+        Commands::Call {
+            operation,
+            args,
+            json,
+            help,
+        } => {
             if help {
                 handle_help(&cli.url, &operation).await?;
             } else {
@@ -109,8 +114,12 @@ async fn handle_list(url: &str, verbose: bool) -> Result<()> {
             if !op.parameters.is_empty() {
                 println!("  Parameters:");
                 for param in &op.parameters {
-                    println!("    - {} ({}){}", param.name, param.param_type,
-                        if param.required { " required" } else { "" });
+                    println!(
+                        "    - {} ({}){}",
+                        param.name,
+                        param.param_type,
+                        if param.required { " required" } else { "" }
+                    );
                 }
             }
         }
@@ -119,7 +128,12 @@ async fn handle_list(url: &str, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-async fn handle_call(url: &str, operation: &str, args: Vec<String>, json: Option<String>) -> Result<()> {
+async fn handle_call(
+    url: &str,
+    operation: &str,
+    args: Vec<String>,
+    json: Option<String>,
+) -> Result<()> {
     let detector = ProtocolDetector::new();
     let adapter = detector.detect_adapter(url).await?;
 
