@@ -31,7 +31,7 @@ impl Adapter for GraphQLAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try GraphQL introspection
+        // Try GraphQL introspection with timeout
         let query = r#"
             {
                 __schema {
@@ -42,14 +42,36 @@ impl Adapter for GraphQLAdapter {
             }
         "#;
 
-        let resp = self
+        let resp = match self
             .client
             .post(url)
+            .timeout(std::time::Duration::from_secs(2))
+            .header("Content-Type", "application/json")
             .json(&serde_json::json!({ "query": query }))
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Ok(false),
+        };
 
-        Ok(resp.status().is_success())
+        if !resp.status().is_success() {
+            return Ok(false);
+        }
+
+        // Check if response is valid GraphQL with __schema
+        if let Ok(body) = resp.json::<Value>().await {
+            // A valid GraphQL introspection response should have data.__schema
+            // or errors (which still indicates GraphQL)
+            if body.get("data").is_some()
+                || body.get("errors").is_some()
+                || body.get("__schema").is_some()
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {

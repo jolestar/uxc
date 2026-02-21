@@ -7,12 +7,14 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 pub struct GrpcAdapter {
-    // TODO: Add gRPC client and reflection client
+    client: reqwest::Client,
 }
 
 impl GrpcAdapter {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            client: reqwest::Client::new(),
+        }
     }
 }
 
@@ -29,8 +31,68 @@ impl Adapter for GrpcAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // TODO: Attempt gRPC reflection
-        // For now, return false (will be implemented in Phase 2)
+        // Attempt gRPC reflection detection
+        // gRPC reflection runs on the same endpoint as the gRPC service
+        // We try to connect to the reflection service
+
+        // Parse URL to get host and port
+        let base_url = url.trim_end_matches('/');
+
+        // Try standard gRPC web detection (for gRPC-Web endpoints)
+        // First check if there's a gRPC-Web HTTP endpoint
+        // Many gRPC services expose a gRPC-Web HTTP endpoint
+        let grpc_web_paths = [
+            "/grpc.reflect.v1alpha.ServerReflection/ServerReflectionInfo",
+            "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
+        ];
+
+        for path in &grpc_web_paths {
+            let full_url = format!("{}{}", base_url, path);
+            if let Ok(resp) = self
+                .client
+                .post(&full_url)
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+            {
+                // If we get any response (even an error) that's not a connection error,
+                // it might be a gRPC endpoint
+                if resp.status().is_success() || resp.status().as_u16() < 500 {
+                    return Ok(true);
+                }
+            }
+        }
+
+        // Try direct gRPC port detection
+        // If the URL specifies a port that's commonly used for gRPC
+        if let Some(port_str) = base_url.split(':').last() {
+            if let Ok(port) = port_str.parse::<u16>() {
+                // Common gRPC ports
+                if port == 50051 || port == 50052 || port == 50053 || port == 9090 {
+                    // Assume it's gRPC if using standard gRPC ports
+                    return Ok(true);
+                }
+            }
+        }
+
+        // Try to detect gRPC-Web by checking common endpoints
+        let grpc_endpoints = ["/grpc.health.v1.Health/Check", "/grpc.reflection.v1alpha"];
+
+        for path in &grpc_endpoints {
+            let full_url = format!("{}{}", base_url, path);
+            if let Ok(resp) = self
+                .client
+                .post(&full_url)
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+            {
+                if resp.status().is_success() || resp.status().as_u16() < 500 {
+                    return Ok(true);
+                }
+            }
+        }
+
         Ok(false)
     }
 
