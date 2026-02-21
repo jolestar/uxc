@@ -54,7 +54,7 @@ impl McpAdapter {
         }
 
         let (cmd, args) = parts.split_first().unwrap();
-        Ok((cmd.clone(), args.iter().cloned().collect()))
+        Ok((cmd.clone(), args.to_vec()))
     }
 }
 
@@ -67,7 +67,7 @@ impl Default for McpAdapter {
 #[async_trait]
 impl Adapter for McpAdapter {
     fn protocol_type(&self) -> ProtocolType {
-        ProtocolType::MCP
+        ProtocolType::Mcp
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {

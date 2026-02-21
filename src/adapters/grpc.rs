@@ -27,7 +27,7 @@ impl Default for GrpcAdapter {
 #[async_trait]
 impl Adapter for GrpcAdapter {
     fn protocol_type(&self) -> ProtocolType {
-        ProtocolType::gRPC
+        ProtocolType::GRpc
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
@@ -96,26 +96,26 @@ impl Adapter for GrpcAdapter {
         Ok(false)
     }
 
-    async fn fetch_schema(&self, url: &str) -> Result<Value> {
+    async fn fetch_schema(&self, _url: &str) -> Result<Value> {
         // TODO: Implement gRPC reflection
         Err(anyhow::anyhow!("gRPC reflection not yet implemented"))
     }
 
-    async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
+    async fn list_operations(&self, _url: &str) -> Result<Vec<Operation>> {
         // TODO: Implement service discovery via reflection
         Err(anyhow::anyhow!("gRPC reflection not yet implemented"))
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn operation_help(&self, _url: &str, _operation: &str) -> Result<String> {
         // TODO: Implement operation help
         Err(anyhow::anyhow!("gRPC reflection not yet implemented"))
     }
 
     async fn execute(
         &self,
-        url: &str,
-        operation: &str,
-        args: HashMap<String, Value>,
+        _url: &str,
+        _operation: &str,
+        _args: HashMap<String, Value>,
     ) -> Result<ExecutionResult> {
         // TODO: Implement gRPC execution
         Err(anyhow::anyhow!("gRPC execution not yet implemented"))

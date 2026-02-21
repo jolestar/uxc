@@ -128,6 +128,7 @@ impl McpStdioClient {
     }
 
     /// List available resources
+    #[allow(dead_code)]
     pub async fn list_resources(&mut self) -> Result<Vec<Resource>> {
         if !self.supports_resources() {
             bail!("Server does not support resources");
@@ -156,6 +157,7 @@ impl McpStdioClient {
     }
 
     /// Read a resource
+    #[allow(dead_code)]
     pub async fn read_resource(&mut self, uri: &str) -> Result<ResourceContents> {
         if !self.supports_resources() {
             bail!("Server does not support resources");
@@ -176,6 +178,7 @@ impl McpStdioClient {
     }
 
     /// List available prompts
+    #[allow(dead_code)]
     pub async fn list_prompts(&mut self) -> Result<Vec<Prompt>> {
         if !self.supports_prompts() {
             bail!("Server does not support prompts");
@@ -204,6 +207,7 @@ impl McpStdioClient {
     }
 
     /// Get a prompt
+    #[allow(dead_code)]
     pub async fn get_prompt(
         &mut self,
         name: &str,

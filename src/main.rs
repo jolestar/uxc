@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use tracing::{error, info};
+use tracing::info;
 
 mod adapters;
 mod output;
 
-use adapters::{Adapter, AdapterEnum, ProtocolDetector};
+use adapters::{Adapter, ProtocolDetector};
 use output::OutputEnvelope;
 
 #[derive(Parser)]

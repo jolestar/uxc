@@ -1,5 +1,7 @@
 //! MCP (Model Context Protocol) types and JSON-RPC messages
 
+#![allow(non_snake_case)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
