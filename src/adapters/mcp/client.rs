@@ -92,8 +92,8 @@ impl McpStdioClient {
 
         let mut tools = Vec::new();
         for tool_value in tools_value {
-            let tool: Tool = serde_json::from_value(tool_value.clone())
-                .context("Failed to parse tool")?;
+            let tool: Tool =
+                serde_json::from_value(tool_value.clone()).context("Failed to parse tool")?;
             tools.push(tool);
         }
 
@@ -101,7 +101,11 @@ impl McpStdioClient {
     }
 
     /// Call a tool
-    pub async fn call_tool(&mut self, name: &str, arguments: Option<JsonValue>) -> Result<CallToolResult> {
+    pub async fn call_tool(
+        &mut self,
+        name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<CallToolResult> {
         if !self.supports_tools() {
             bail!("Server does not support tools");
         }
@@ -117,8 +121,8 @@ impl McpStdioClient {
             .await
             .context(format!("Failed to call tool '{}'", name))?;
 
-        let call_result: CallToolResult = serde_json::from_value(result)
-            .context("Failed to parse tool call result")?;
+        let call_result: CallToolResult =
+            serde_json::from_value(result).context("Failed to parse tool call result")?;
 
         Ok(call_result)
     }
@@ -165,8 +169,8 @@ impl McpStdioClient {
             .await
             .context(format!("Failed to read resource '{}'", uri))?;
 
-        let contents: ResourceContents = serde_json::from_value(result)
-            .context("Failed to parse resource contents")?;
+        let contents: ResourceContents =
+            serde_json::from_value(result).context("Failed to parse resource contents")?;
 
         Ok(contents)
     }
@@ -191,8 +195,8 @@ impl McpStdioClient {
 
         let mut prompts = Vec::new();
         for prompt_value in prompts_value {
-            let prompt: Prompt = serde_json::from_value(prompt_value.clone())
-                .context("Failed to parse prompt")?;
+            let prompt: Prompt =
+                serde_json::from_value(prompt_value.clone()).context("Failed to parse prompt")?;
             prompts.push(prompt);
         }
 
@@ -200,7 +204,11 @@ impl McpStdioClient {
     }
 
     /// Get a prompt
-    pub async fn get_prompt(&mut self, name: &str, arguments: Option<HashMap<String, String>>) -> Result<GetPromptResult> {
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: Option<HashMap<String, String>>,
+    ) -> Result<GetPromptResult> {
         if !self.supports_prompts() {
             bail!("Server does not support prompts");
         }
@@ -216,8 +224,8 @@ impl McpStdioClient {
             .await
             .context(format!("Failed to get prompt '{}'", name))?;
 
-        let prompt_result: GetPromptResult = serde_json::from_value(result)
-            .context("Failed to parse prompt result")?;
+        let prompt_result: GetPromptResult =
+            serde_json::from_value(result).context("Failed to parse prompt result")?;
 
         Ok(prompt_result)
     }

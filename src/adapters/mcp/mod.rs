@@ -7,9 +7,9 @@ pub mod transport;
 pub mod types;
 
 use super::{Adapter, ExecutionResult, Operation, ProtocolType};
-pub use client::McpStdioClient;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+pub use client::McpStdioClient;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -43,7 +43,7 @@ impl McpAdapter {
             || url.starts_with("node ")
             || url.starts_with("python ")
             || url.starts_with("python3 ")
-            || url.contains("\\")  // Windows path
+            || url.contains("\\") // Windows path
     }
 
     /// Parse a stdio command into the command and arguments
@@ -168,7 +168,10 @@ impl Adapter for McpAdapter {
                     help.push_str(&format!("Description: {}\n", tool.description));
 
                     if let Some(schema) = tool.inputSchema {
-                        help.push_str(&format!("\nInput Schema:\n{}\n", serde_json::to_string_pretty(&schema)?));
+                        help.push_str(&format!(
+                            "\nInput Schema:\n{}\n",
+                            serde_json::to_string_pretty(&schema)?
+                        ));
                     }
 
                     return Ok(help);
@@ -274,7 +277,12 @@ fn convert_tool_content_to_value(content: &[types::ToolContent]) -> Value {
                 "data": data,
                 "mimeType": mimeType
             }),
-            types::ToolContent::Resource { uri, mimeType, text, blob } => {
+            types::ToolContent::Resource {
+                uri,
+                mimeType,
+                text,
+                blob,
+            } => {
                 let mut obj = serde_json::json!({
                     "type": "resource",
                     "uri": uri

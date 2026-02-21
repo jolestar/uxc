@@ -52,10 +52,7 @@ impl McpStdioTransport {
 
         // Get stdin and stdout handles
         let stdin = child.stdin.take().context("Failed to get stdin handle")?;
-        let stdout = child
-            .stdout
-            .take()
-            .context("Failed to get stdout handle")?;
+        let stdout = child.stdout.take().context("Failed to get stdout handle")?;
 
         // Create channels for sending requests
         let (request_tx, mut request_rx) = mpsc::unbounded_channel::<RequestWithResponse>();
@@ -91,9 +88,10 @@ impl McpStdioTransport {
 
         // Spawn a task to read responses from stdout
         let next_id = Arc::new(Mutex::new(1i64));
-        let response_channels = Arc::new(Mutex::new(
-            std::collections::HashMap::<RequestId, tokio::sync::oneshot::Sender<JsonRpcResponse>>::new(),
-        ));
+        let response_channels = Arc::new(Mutex::new(std::collections::HashMap::<
+            RequestId,
+            tokio::sync::oneshot::Sender<JsonRpcResponse>,
+        >::new()));
 
         let response_channels_clone = response_channels.clone();
         tokio::spawn(async move {
@@ -138,7 +136,11 @@ impl McpStdioTransport {
     }
 
     /// Send a request and wait for the response
-    pub async fn send_request(&mut self, method: &str, params: Option<JsonValue>) -> Result<JsonValue> {
+    pub async fn send_request(
+        &mut self,
+        method: &str,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue> {
         // Get the next ID
         let id = {
             let mut id_guard = self.next_id.lock().await;
@@ -179,7 +181,11 @@ impl McpStdioTransport {
     }
 
     /// Send a notification (no response expected)
-    pub async fn send_notification(&mut self, method: &str, params: Option<JsonValue>) -> Result<()> {
+    pub async fn send_notification(
+        &mut self,
+        method: &str,
+        params: Option<JsonValue>,
+    ) -> Result<()> {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
