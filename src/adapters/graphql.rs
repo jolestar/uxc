@@ -1,6 +1,6 @@
 //! GraphQL adapter with introspection support
 
-use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, ProtocolType};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -107,7 +107,7 @@ impl Adapter for GraphQLAdapter {
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
         // For GraphQL, we expose the top-level query/mutation fields as operations
         let schema = self.fetch_schema(url).await?;
-        let mut operations = Vec::new();
+        let operations = Vec::new();
 
         // TODO: Parse introspection result and extract fields
         // For now, return placeholder

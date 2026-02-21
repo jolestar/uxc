@@ -21,7 +21,7 @@ impl ProtocolRouter {
             .detector
             .detect_adapter(url)
             .await
-            .map_err(|e| UxcError::GenericError(e))?;
+            .map_err(UxcError::GenericError)?;
         Ok(adapter.protocol_type())
     }
 
@@ -30,7 +30,7 @@ impl ProtocolRouter {
         self.detector
             .detect_adapter(url)
             .await
-            .map_err(|e| UxcError::GenericError(e))
+            .map_err(UxcError::GenericError)
     }
 }
 

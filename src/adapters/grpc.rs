@@ -1,6 +1,6 @@
 //! gRPC adapter with reflection support
 
-use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use super::{Adapter, ExecutionResult, Operation, ProtocolType};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
