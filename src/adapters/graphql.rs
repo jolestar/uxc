@@ -68,7 +68,7 @@ impl GraphQLAdapter {
             if let Some(error_array) = errors.as_array() {
                 let error_messages: Vec<String> = error_array
                     .iter()
-                    .filter_map(|e| {
+                    .map(|e| {
                         let message = e.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
                         let mut error_str = format!("- {}", message);
 
@@ -89,7 +89,7 @@ impl GraphQLAdapter {
                             error_str.push_str(&format!(" (path: {})", path));
                         }
 
-                        Some(error_str)
+                        error_str
                     })
                     .collect();
 
@@ -272,7 +272,7 @@ impl GraphQLAdapter {
 
                     let return_type = field
                         .get("type")
-                        .map(|t| Self::type_to_string(t));
+                        .map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("query/{}", name),
@@ -303,7 +303,7 @@ impl GraphQLAdapter {
 
                     let return_type = field
                         .get("type")
-                        .map(|t| Self::type_to_string(t));
+                        .map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("mutation/{}", name),
@@ -334,7 +334,7 @@ impl GraphQLAdapter {
 
                     let return_type = field
                         .get("type")
-                        .map(|t| Self::type_to_string(t));
+                        .map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("subscription/{}", name),
@@ -383,15 +383,12 @@ impl GraphQLAdapter {
 
     /// Determine operation type and name from operation string
     fn parse_operation_name(operation: &str) -> Result<(OperationType, String)> {
-        if operation.starts_with("query/") {
-            Ok((OperationType::Query, operation["query/".len()..].to_string()))
-        } else if operation.starts_with("mutation/") {
-            Ok((OperationType::Mutation, operation["mutation/".len()..].to_string()))
-        } else if operation.starts_with("subscription/") {
-            Ok((
-                OperationType::Subscription,
-                operation["subscription/".len()..].to_string(),
-            ))
+        if let Some(rest) = operation.strip_prefix("query/") {
+            Ok((OperationType::Query, rest.to_string()))
+        } else if let Some(rest) = operation.strip_prefix("mutation/") {
+            Ok((OperationType::Mutation, rest.to_string()))
+        } else if let Some(rest) = operation.strip_prefix("subscription/") {
+            Ok((OperationType::Subscription, rest.to_string()))
         } else {
             // Default to query for backward compatibility
             Ok((OperationType::Query, operation.to_string()))
