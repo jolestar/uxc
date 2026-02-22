@@ -32,6 +32,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install protobuf compiler
+        shell: bash
         run: |
           if [[ "$(uname)" == "Linux" ]]; then
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -124,6 +125,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install protobuf compiler
+        shell: bash
         run: |
           if [[ "$(uname)" == "Linux" ]]; then
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
