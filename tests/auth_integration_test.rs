@@ -229,7 +229,7 @@ fn test_toml_format() {
     let contents = fs::read_to_string(&profiles_path).expect("Failed to read profiles file");
 
     // Verify the format contains expected elements
-    assert!(contents.contains("[profile.default]"));
+    assert!(contents.contains("[default]"));
     assert!(contents.contains("api_key"));
     assert!(contents.contains("sk-test-1234"));
     assert!(contents.contains("type"));

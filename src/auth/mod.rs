@@ -6,11 +6,11 @@
 //! # Profile Structure
 //!
 //! ```toml
-//! [profile.default]
+//! [default]
 //! api_key = "sk-..."
 //! type = "bearer"
 //!
-//! [profile.production]
+//! [production]
 //! api_key = "sk-prod-..."
 //! type = "bearer"
 //! ```
@@ -154,47 +154,9 @@ impl Profiles {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read profiles file: {:?}", path))?;
 
-        // Parse TOML - handle nested [profile.xxx] format
-        let mut profiles = Self::new();
-
-        // The format is:
-        // [profile.default]
-        // api_key = "..."
-        // type = "bearer"
-
-        if let Ok(root) = toml::from_str::<toml::Value>(&contents) {
-            // Look for [profile] section
-            if let Some(profile_section) = root.get("profile").and_then(|v| v.as_table()) {
-                for (name, value) in profile_section {
-                    if let Some(table) = value.as_table() {
-                        if let Some(api_key) = table.get("api_key").and_then(|v| v.as_str()) {
-                            let auth_type = table
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("bearer");
-
-                            let auth_type =
-                                auth_type.parse::<AuthType>().unwrap_or(AuthType::Bearer);
-
-                            let description = table
-                                .get("description")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-
-                            let profile = Profile {
-                                api_key: api_key.to_string(),
-                                auth_type,
-                                description,
-                            };
-
-                            profiles.profiles.insert(name.clone(), profile);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(profiles)
+        // Deserialize directly from TOML - #[serde(flatten)] handles the structure
+        toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse profiles file: {:?}", path))
     }
 
     /// Save profiles to ~/.uxc/profiles.toml
@@ -210,32 +172,9 @@ impl Profiles {
             }
         }
 
-        // Convert to TOML format with nested [profile.xxx] sections
-        let mut root_table = toml::value::Table::new();
-        let mut profile_table = toml::value::Table::new();
-
-        for (name, profile) in &self.profiles {
-            let mut table = toml::value::Table::new();
-            table.insert(
-                "api_key".to_string(),
-                toml::Value::String(profile.api_key.clone()),
-            );
-            table.insert(
-                "type".to_string(),
-                toml::Value::String(profile.auth_type.to_string()),
-            );
-
-            if let Some(desc) = &profile.description {
-                table.insert("description".to_string(), toml::Value::String(desc.clone()));
-            }
-
-            profile_table.insert(name.clone(), toml::Value::Table(table));
-        }
-
-        root_table.insert("profile".to_string(), toml::Value::Table(profile_table));
-
+        // Serialize directly to TOML - #[serde(flatten)] will handle the structure
         let toml_string =
-            toml::to_string_pretty(&root_table).context("Failed to serialize profiles to TOML")?;
+            toml::to_string_pretty(&self).context("Failed to serialize profiles to TOML")?;
 
         fs::write(&path, toml_string)
             .with_context(|| format!("Failed to write profiles file: {:?}", path))?;
