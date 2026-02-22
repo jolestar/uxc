@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 /// Enum of all available adapters
+#[allow(non_camel_case_types)]
 pub enum AdapterEnum {
     OpenAPI(openapi::OpenAPIAdapter),
     gRPC(grpc::GrpcAdapter),
@@ -88,6 +89,7 @@ impl Adapter for AdapterEnum {
 
 /// Supported protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum ProtocolType {
     OpenAPI,
     gRPC,
