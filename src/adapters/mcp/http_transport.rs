@@ -26,7 +26,10 @@ impl McpHttpTransport {
 
         // Ensure it's http or https
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            bail!("MCP HTTP transport only supports http:// and https:// URLs, got: {}", parsed.scheme());
+            bail!(
+                "MCP HTTP transport only supports http:// and https:// URLs, got: {}",
+                parsed.scheme()
+            );
         }
 
         let client = Client::builder()
