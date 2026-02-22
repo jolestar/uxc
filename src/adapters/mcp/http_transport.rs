@@ -21,8 +21,7 @@ impl McpHttpTransport {
     /// Create a new HTTP transport connected to the given URL
     pub fn new(url: String) -> Result<Self> {
         // Validate URL
-        let parsed = url::Url::parse(&url)
-            .context("Invalid MCP server URL")?;
+        let parsed = url::Url::parse(&url).context("Invalid MCP server URL")?;
 
         // Ensure it's http or https
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
@@ -62,10 +61,15 @@ impl McpHttpTransport {
             id: RequestId::Number(id),
         };
 
-        tracing::debug!("Sending MCP HTTP request: {} to {}", method, self.server_url);
+        tracing::debug!(
+            "Sending MCP HTTP request: {} to {}",
+            method,
+            self.server_url
+        );
 
         // Send HTTP POST request
-        let response = self.client
+        let response = self
+            .client
             .post(&self.server_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
@@ -135,14 +139,18 @@ impl McpHttpTransport {
     pub async fn list_tools(&self) -> Result<Vec<Tool>> {
         let result = self.send_request("tools/list", None).await?;
 
-        let response: ToolsListResponse = serde_json::from_value(result)
-            .context("Failed to parse tools/list response")?;
+        let response: ToolsListResponse =
+            serde_json::from_value(result).context("Failed to parse tools/list response")?;
 
         Ok(response.tools)
     }
 
     /// Call a tool
-    pub async fn call_tool(&self, name: &str, arguments: Option<JsonValue>) -> Result<ToolCallResult> {
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<ToolCallResult> {
         let params = serde_json::json!({
             "name": name,
             "arguments": arguments
@@ -157,8 +165,8 @@ impl McpHttpTransport {
     pub async fn list_resources(&self) -> Result<Vec<Resource>> {
         let result = self.send_request("resources/list", None).await?;
 
-        let response: ResourcesListResponse = serde_json::from_value(result)
-            .context("Failed to parse resources/list response")?;
+        let response: ResourcesListResponse =
+            serde_json::from_value(result).context("Failed to parse resources/list response")?;
 
         Ok(response.resources)
     }
@@ -178,14 +186,18 @@ impl McpHttpTransport {
     pub async fn list_prompts(&self) -> Result<Vec<Prompt>> {
         let result = self.send_request("prompts/list", None).await?;
 
-        let response: PromptsListResponse = serde_json::from_value(result)
-            .context("Failed to parse prompts/list response")?;
+        let response: PromptsListResponse =
+            serde_json::from_value(result).context("Failed to parse prompts/list response")?;
 
         Ok(response.prompts)
     }
 
     /// Get a prompt
-    pub async fn get_prompt(&self, name: &str, arguments: Option<JsonValue>) -> Result<GetPromptResult> {
+    pub async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<GetPromptResult> {
         let params = serde_json::json!({
             "name": name,
             "arguments": arguments
