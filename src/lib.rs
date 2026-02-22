@@ -2,6 +2,8 @@
 //!
 //! Schema-driven, multi-protocol RPC execution runtime.
 
+#![allow(non_camel_case_types)]
+
 pub mod adapters;
 pub mod error;
 pub mod output;
