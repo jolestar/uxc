@@ -14,12 +14,21 @@ pub use client::McpStdioClient;
 pub use http_transport::McpHttpTransport;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, info};
 
-pub struct McpAdapter;
+pub struct McpAdapter {
+    cache: Option<Arc<dyn crate::cache::Cache>>,
+}
 
 impl McpAdapter {
     pub fn new() -> Self {
-        Self
+        Self { cache: None }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// Check if a URL/command looks like an MCP stdio command
@@ -102,6 +111,22 @@ impl Adapter for McpAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        // Try cache first if available
+        if let Some(cache) = &self.cache {
+            match cache.get(url)? {
+                crate::cache::CacheResult::Hit(schema) => {
+                    debug!("MCP cache hit for: {}", url);
+                    return Ok(schema);
+                }
+                crate::cache::CacheResult::Bypassed => {
+                    debug!("MCP cache bypassed for: {}", url);
+                }
+                crate::cache::CacheResult::Miss => {
+                    debug!("MCP cache miss for: {}", url);
+                }
+            }
+        }
+
         // If it's a stdio command, connect and get server info
         if Self::is_stdio_command(url) {
             let (cmd, args) = Self::parse_stdio_command(url)?;
@@ -120,6 +145,15 @@ impl Adapter for McpAdapter {
                 }
             });
 
+            // Store in cache if available
+            if let Some(cache) = &self.cache {
+                if let Err(e) = cache.put(url, &schema) {
+                    debug!("Failed to cache MCP schema: {}", e);
+                } else {
+                    info!("Cached MCP schema for: {}", url);
+                }
+            }
+
             return Ok(schema);
         }
 
@@ -136,6 +170,15 @@ impl Adapter for McpAdapter {
                 "serverInfo": init_result.serverInfo,
                 "capabilities": init_result.capabilities
             });
+
+            // Store in cache if available
+            if let Some(cache) = &self.cache {
+                if let Err(e) = cache.put(url, &schema) {
+                    debug!("Failed to cache MCP schema: {}", e);
+                } else {
+                    info!("Cached MCP schema for: {}", url);
+                }
+            }
 
             return Ok(schema);
         }

@@ -1,0 +1,111 @@
+//! Schema caching module for improved performance
+//!
+//! Provides filesystem-based caching for schemas across all protocols (OpenAPI, gRPC, GraphQL, MCP).
+//! Cache is stored in ~/.uxc/cache/schemas/ with TTL-based expiration.
+
+mod config;
+mod stats;
+mod storage;
+
+pub use config::{CacheConfig, CacheOptions};
+pub use stats::CacheStats;
+pub use storage::{CacheEntry, CacheStorage, SchemaCache};
+
+use anyhow::Result;
+use serde_json::Value;
+use std::sync::Arc;
+
+/// Default cache TTL in seconds (24 hours)
+pub const DEFAULT_CACHE_TTL: u64 = 86400;
+
+/// Default cache directory relative to home directory
+pub const DEFAULT_CACHE_DIR: &str = ".uxc/cache/schemas";
+
+/// Cache result indicating whether the value was retrieved from cache
+#[derive(Debug, Clone)]
+pub enum CacheResult {
+    /// Value was retrieved from cache
+    Hit(Value),
+    /// Value was not in cache or was expired
+    Miss,
+    /// Cache was bypassed (e.g., --no-cache flag)
+    Bypassed,
+}
+
+impl CacheResult {
+    pub fn is_hit(&self) -> bool {
+        matches!(self, CacheResult::Hit(_))
+    }
+
+    pub fn is_miss(&self) -> bool {
+        matches!(self, CacheResult::Miss)
+    }
+
+    pub fn is_bypassed(&self) -> bool {
+        matches!(self, CacheResult::Bypassed)
+    }
+}
+
+/// Main cache interface for adapters
+///
+/// This trait provides a simple interface for protocol adapters to interact
+/// with the cache system.
+pub trait Cache: Send + Sync {
+    /// Get a schema from cache
+    ///
+    /// Returns `CacheResult::Hit` if the schema is found and valid,
+    /// `CacheResult::Miss` if not found or expired, or `CacheResult::Bypassed`
+    /// if caching is disabled.
+    fn get(&self, url: &str) -> Result<CacheResult>;
+
+    /// Put a schema into cache
+    ///
+    /// Stores the schema with metadata including timestamp and TTL.
+    /// If caching is disabled, this is a no-op.
+    fn put(&self, url: &str, schema: &Value) -> Result<()>;
+
+    /// Invalidate a specific cache entry
+    fn invalidate(&self, url: &str) -> Result<()>;
+
+    /// Clear all cache entries
+    fn clear(&self) -> Result<()>;
+
+    /// Get cache statistics
+    fn stats(&self) -> Result<CacheStats>;
+
+    /// Check if caching is enabled
+    fn is_enabled(&self) -> bool;
+}
+
+/// Create a new schema cache instance with the given configuration
+pub fn create_cache(config: CacheConfig) -> Result<Arc<dyn Cache>> {
+    Ok(Arc::new(SchemaCache::new(config)?))
+}
+
+/// Create a cache with default settings
+pub fn create_default_cache() -> Result<Arc<dyn Cache>> {
+    Ok(Arc::new(SchemaCache::default()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_result() {
+        let hit = CacheResult::Hit(serde_json::json!( {"test": "data"} ));
+        assert!(hit.is_hit());
+        assert!(!hit.is_miss());
+        assert!(!hit.is_bypassed());
+
+        let miss = CacheResult::Miss;
+        assert!(!miss.is_hit());
+        assert!(miss.is_miss());
+        assert!(!miss.is_bypassed());
+
+        let bypassed = CacheResult::Bypassed;
+        assert!(!bypassed.is_hit());
+        assert!(!bypassed.is_miss());
+        assert!(bypassed.is_bypassed());
+    }
+}

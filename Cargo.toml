@@ -11,6 +11,9 @@ keywords = ["rpc", "cli", "openapi", "grpc", "mcp"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+# Dependency overrides for older Rust version
+getrandom = "0.2"
+
 # CLI Framework
 clap = { version = "4.4", features = ["derive"] }
 clap_complete = "4.4"
@@ -60,6 +63,7 @@ prost-types = "0.12"
 [dev-dependencies]
 tokio-test = "0.4"
 mockito = "1.2"
+tempfile = "3.10"
 
 [build-dependencies]
 tonic-build = "0.10"

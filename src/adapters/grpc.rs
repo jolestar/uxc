@@ -25,11 +25,14 @@ use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tonic::Status;
+use tracing::{debug, info};
 
 /// gRPC adapter implementation
 pub struct GrpcAdapter {
-    /// Cache for reflection clients and descriptors
-    cache: Arc<RwLock<HashMap<String, CachedReflectionData>>>,
+    /// In-memory cache for reflection clients and descriptors
+    in_memory_cache: Arc<RwLock<HashMap<String, CachedReflectionData>>>,
+    /// Persistent schema cache
+    schema_cache: Option<Arc<dyn crate::cache::Cache>>,
 }
 
 /// Cached reflection data for a server
@@ -61,8 +64,14 @@ struct MethodInfo {
 impl GrpcAdapter {
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            in_memory_cache: Arc::new(RwLock::new(HashMap::new())),
+            schema_cache: None,
         }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
+        self.schema_cache = Some(cache);
+        self
     }
 
     /// Parse URL to get host:port
@@ -246,9 +255,9 @@ impl GrpcAdapter {
 
     /// Get or load service information
     async fn get_service_info(&self, url: &str) -> Result<HashMap<String, ServiceInfo>> {
-        // Check cache first
+        // Check in-memory cache first
         {
-            let cache = self.cache.read().await;
+            let cache = self.in_memory_cache.read().await;
             if let Some(data) = cache.get(url) {
                 return Ok(data.services.clone());
             }
@@ -277,8 +286,8 @@ impl GrpcAdapter {
             }
         }
 
-        // Cache the results
-        let mut cache = self.cache.write().await;
+        // Cache the results in memory
+        let mut cache = self.in_memory_cache.write().await;
         cache.insert(
             url.to_string(),
             CachedReflectionData {
@@ -455,6 +464,22 @@ impl Adapter for GrpcAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        // Try persistent cache first if available
+        if let Some(cache) = &self.schema_cache {
+            match cache.get(url)? {
+                crate::cache::CacheResult::Hit(schema) => {
+                    debug!("gRPC cache hit for: {}", url);
+                    return Ok(schema);
+                }
+                crate::cache::CacheResult::Bypassed => {
+                    debug!("gRPC cache bypassed for: {}", url);
+                }
+                crate::cache::CacheResult::Miss => {
+                    debug!("gRPC cache miss for: {}", url);
+                }
+            }
+        }
+
         let services = self.get_service_info(url).await?;
 
         let mut service_list = Vec::new();
@@ -476,10 +501,21 @@ impl Adapter for GrpcAdapter {
             }));
         }
 
-        Ok(serde_json::json!({
+        let schema = serde_json::json!({
             "protocol": "gRPC",
             "services": service_list,
-        }))
+        });
+
+        // Store in persistent cache if available
+        if let Some(cache) = &self.schema_cache {
+            if let Err(e) = cache.put(url, &schema) {
+                debug!("Failed to cache gRPC schema: {}", e);
+            } else {
+                info!("Cached gRPC schema for: {}", url);
+            }
+        }
+
+        Ok(schema)
     }
 
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
