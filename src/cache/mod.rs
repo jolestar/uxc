@@ -84,7 +84,7 @@ pub fn create_cache(config: CacheConfig) -> Result<Arc<dyn Cache>> {
 
 /// Create a cache with default settings
 pub fn create_default_cache() -> Result<Arc<dyn Cache>> {
-    Ok(Arc::new(SchemaCache::default()?))
+    Ok(Arc::new(SchemaCache::with_default_config()?))
 }
 
 #[cfg(test)]

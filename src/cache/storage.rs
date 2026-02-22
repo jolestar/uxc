@@ -191,7 +191,7 @@ impl CacheStorage {
 
                 by_protocol
                     .entry(cache_entry.protocol.clone())
-                    .or_insert_with(ProtocolStats::new)
+                    .or_default()
                     .entries += 1;
 
                 by_protocol.get_mut(&cache_entry.protocol).unwrap().size += size;
@@ -232,7 +232,7 @@ impl SchemaCache {
     }
 
     /// Create with default configuration
-    pub fn default() -> Result<Self> {
+    pub fn with_default_config() -> Result<Self> {
         Self::new(CacheConfig::default())
     }
 
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn test_cache_entry_expired() {
         let schema = serde_json::json!({"test": "data"});
-        let mut entry = CacheEntry::new(schema, 0, "openapi".to_string());
+        let entry = CacheEntry::new(schema, 0, "openapi".to_string());
 
         // Should be expired immediately with 0 TTL
         assert!(entry.is_expired());
