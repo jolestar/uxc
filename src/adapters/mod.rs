@@ -178,28 +178,28 @@ impl ProtocolDetector {
 
     /// Get adapter for a URL (auto-detects protocol)
     pub async fn detect_adapter(&self, url: &str) -> Result<AdapterEnum> {
-        // Try OpenAPI first
-        let openapi_adapter = openapi::OpenAPIAdapter::new();
-        if openapi_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::OpenAPI(openapi_adapter));
-        }
-
-        // Try gRPC
-        let grpc_adapter = grpc::GrpcAdapter::new();
-        if grpc_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::GRpc(grpc_adapter));
-        }
-
-        // Try MCP
+        // Try MCP first (stdio commands are distinct)
         let mcp_adapter = mcp::McpAdapter::new();
         if mcp_adapter.can_handle(url).await? {
             return Ok(AdapterEnum::Mcp(mcp_adapter));
         }
 
-        // Try GraphQL
+        // Try GraphQL (introspection is reliable)
         let graphql_adapter = graphql::GraphQLAdapter::new();
         if graphql_adapter.can_handle(url).await? {
             return Ok(AdapterEnum::GraphQL(graphql_adapter));
+        }
+
+        // Try OpenAPI
+        let openapi_adapter = openapi::OpenAPIAdapter::new();
+        if openapi_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::OpenAPI(openapi_adapter));
+        }
+
+        // Try gRPC (less reliable detection, try last)
+        let grpc_adapter = grpc::GrpcAdapter::new();
+        if grpc_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::GRpc(grpc_adapter));
         }
 
         Err(anyhow::anyhow!("No adapter found for URL: {}", url))
