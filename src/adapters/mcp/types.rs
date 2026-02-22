@@ -244,3 +244,24 @@ pub struct GetPromptResult {
     pub description: String,
     pub messages: Vec<PromptMessage>,
 }
+
+/// Tools list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsListResponse {
+    pub tools: Vec<Tool>,
+}
+
+/// Tool call result (alias for CallToolResult)
+pub type ToolCallResult = CallToolResult;
+
+/// Resources list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourcesListResponse {
+    pub resources: Vec<Resource>,
+}
+
+/// Prompts list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptsListResponse {
+    pub prompts: Vec<Prompt>,
+}

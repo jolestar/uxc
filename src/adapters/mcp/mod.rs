@@ -15,6 +15,8 @@ pub use http_transport::McpHttpTransport;
 use serde_json::Value;
 use std::collections::HashMap;
 
+pub struct McpAdapter;
+
 impl McpAdapter {
     pub fn new() -> Self {
         Self
