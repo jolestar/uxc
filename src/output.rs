@@ -70,6 +70,7 @@ impl OutputEnvelope {
     }
 
     /// Create an error response
+    #[allow(dead_code)]
     pub fn error(code: &str, message: &str) -> Self {
         Self {
             ok: false,

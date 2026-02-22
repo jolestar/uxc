@@ -104,9 +104,8 @@ impl Adapter for GraphQLAdapter {
         Ok(resp.json().await?)
     }
 
-    async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
+    async fn list_operations(&self, _url: &str) -> Result<Vec<Operation>> {
         // For GraphQL, we expose the top-level query/mutation fields as operations
-        let schema = self.fetch_schema(url).await?;
         let operations = Vec::new();
 
         // TODO: Parse introspection result and extract fields
@@ -115,7 +114,7 @@ impl Adapter for GraphQLAdapter {
         Ok(operations)
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn operation_help(&self, _url: &str, _operation: &str) -> Result<String> {
         // TODO: Implement field help via introspection
         Err(anyhow::anyhow!("GraphQL help not yet fully implemented"))
     }
@@ -124,7 +123,7 @@ impl Adapter for GraphQLAdapter {
         &self,
         url: &str,
         operation: &str,
-        args: HashMap<String, Value>,
+        _args: HashMap<String, Value>,
     ) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
 

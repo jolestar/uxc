@@ -1,0 +1,306 @@
+//! MCP (Model Context Protocol) adapter
+//!
+//! This module provides support for MCP servers via both stdio and HTTP transports.
+
+pub mod client;
+pub mod transport;
+pub mod types;
+
+use super::{Adapter, ExecutionResult, Operation, ProtocolType};
+use anyhow::{bail, Result};
+use async_trait::async_trait;
+pub use client::McpStdioClient;
+use serde_json::Value;
+use std::collections::HashMap;
+
+pub struct McpAdapter;
+
+impl McpAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Check if a URL/command looks like an MCP stdio command
+    pub fn is_stdio_command(url: &str) -> bool {
+        // Check if it looks like a command (not a URL)
+        // URLs have schemes like http://, https://, etc.
+        // Commands start with executable names or paths
+        let lower = url.to_lowercase();
+
+        // Not an HTTP(S) URL
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            return false;
+        }
+
+        // Check for common command patterns
+        // - Contains spaces (command with args)
+        // - Starts with common shell metacharacters
+        // - Contains executable patterns
+        url.contains(' ')
+            || url.starts_with("./")
+            || url.starts_with('/')
+            || url.starts_with("npx ")
+            || url.starts_with("node ")
+            || url.starts_with("python ")
+            || url.starts_with("python3 ")
+            || url.contains("\\") // Windows path
+    }
+
+    /// Parse a stdio command into the command and arguments
+    pub fn parse_stdio_command(url: &str) -> Result<(String, Vec<String>)> {
+        let parts = self::transport::parse_command(url);
+        if parts.is_empty() {
+            bail!("Empty command");
+        }
+
+        let (cmd, args) = parts.split_first().unwrap();
+        Ok((cmd.clone(), args.to_vec()))
+    }
+}
+
+impl Default for McpAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Adapter for McpAdapter {
+    fn protocol_type(&self) -> ProtocolType {
+        ProtocolType::Mcp
+    }
+
+    async fn can_handle(&self, url: &str) -> Result<bool> {
+        // First, check if it's a stdio command
+        if Self::is_stdio_command(url) {
+            return Ok(true);
+        }
+
+        // For HTTP-based detection, try MCP discovery endpoints
+        // This is kept from the original implementation
+        let base_url = url.trim_end_matches('/');
+
+        // Check if URL looks like an MCP server path (e.g., contains /mcp/)
+        if base_url.contains("/mcp/") || base_url.ends_with("/mcp") {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        // If it's a stdio command, connect and get server info
+        if Self::is_stdio_command(url) {
+            let (cmd, args) = Self::parse_stdio_command(url)?;
+            let client = McpStdioClient::connect(&cmd, &args).await?;
+
+            // Build schema from server capabilities
+            let schema = serde_json::json!({
+                "protocol": "MCP",
+                "protocolVersion": "2024-11-05",
+                "transport": "stdio",
+                "command": cmd,
+                "capabilities": {
+                    "tools": client.supports_tools(),
+                    "resources": client.supports_resources(),
+                    "prompts": client.supports_prompts(),
+                }
+            });
+
+            return Ok(schema);
+        }
+
+        // For HTTP-based MCP, return schema info
+        let schema = serde_json::json!({
+            "protocol": "MCP",
+            "protocolVersion": "2024-11-05",
+            "transport": "http",
+            "url": url
+        });
+
+        Ok(schema)
+    }
+
+    async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
+        if Self::is_stdio_command(url) {
+            let (cmd, args) = Self::parse_stdio_command(url)?;
+            let mut client = McpStdioClient::connect(&cmd, &args).await?;
+
+            // List tools as operations
+            let tools = client.list_tools().await?;
+
+            let operations = tools
+                .into_iter()
+                .map(|tool| {
+                    let parameters = if let Some(schema) = tool.inputSchema {
+                        // Convert JSON Schema to our Parameter format
+                        parse_schema_to_parameters(&schema)
+                    } else {
+                        Vec::new()
+                    };
+
+                    Operation {
+                        name: tool.name.clone(),
+                        description: Some(tool.description),
+                        parameters,
+                        return_type: Some("ToolContent".to_string()),
+                    }
+                })
+                .collect();
+
+            return Ok(operations);
+        }
+
+        // For HTTP-based MCP, return empty list (not implemented)
+        Ok(Vec::new())
+    }
+
+    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+        if Self::is_stdio_command(url) {
+            let (cmd, args) = Self::parse_stdio_command(url)?;
+            let mut client = McpStdioClient::connect(&cmd, &args).await?;
+
+            let tools = client.list_tools().await?;
+
+            for tool in tools {
+                if tool.name == operation {
+                    let mut help = format!("Tool: {}\n", tool.name);
+                    help.push_str(&format!("Description: {}\n", tool.description));
+
+                    if let Some(schema) = tool.inputSchema {
+                        help.push_str(&format!(
+                            "\nInput Schema:\n{}\n",
+                            serde_json::to_string_pretty(&schema)?
+                        ));
+                    }
+
+                    return Ok(help);
+                }
+            }
+
+            bail!("Tool '{}' not found", operation);
+        }
+
+        bail!("HTTP-based MCP not yet implemented");
+    }
+
+    async fn execute(
+        &self,
+        url: &str,
+        operation: &str,
+        args: HashMap<String, Value>,
+    ) -> Result<ExecutionResult> {
+        let start = std::time::Instant::now();
+
+        if Self::is_stdio_command(url) {
+            let (cmd, args_list) = Self::parse_stdio_command(url)?;
+            let mut client = McpStdioClient::connect(&cmd, &args_list).await?;
+
+            // Build arguments JSON
+            let arguments = if args.is_empty() {
+                None
+            } else {
+                Some(Value::Object(args.into_iter().collect()))
+            };
+
+            let result = client.call_tool(operation, arguments).await?;
+
+            // Convert tool content to a simple JSON output
+            let output = convert_tool_content_to_value(&result.content);
+
+            return Ok(ExecutionResult {
+                data: output,
+                metadata: super::ExecutionMetadata {
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    operation: operation.to_string(),
+                },
+            });
+        }
+
+        bail!("HTTP-based MCP not yet implemented");
+    }
+}
+
+/// Parse JSON Schema to our Parameter format
+fn parse_schema_to_parameters(schema: &Value) -> Vec<super::Parameter> {
+    let mut parameters = Vec::new();
+
+    if let Some(obj) = schema.as_object() {
+        if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+            let required = obj
+                .get("required")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .unwrap_or_default();
+
+            for (name, prop_schema) in props {
+                let param_type = prop_schema
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let description = prop_schema
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                parameters.push(super::Parameter {
+                    name: name.clone(),
+                    param_type,
+                    required: required.contains(name.as_str()),
+                    description,
+                });
+            }
+        }
+    }
+
+    parameters
+}
+
+/// Convert tool content to a JSON value for output
+fn convert_tool_content_to_value(content: &[types::ToolContent]) -> Value {
+    let mut results = Vec::new();
+
+    for item in content {
+        let value = match item {
+            types::ToolContent::Text { text } => serde_json::json!({
+                "type": "text",
+                "text": text
+            }),
+            types::ToolContent::Image { data, mimeType } => serde_json::json!({
+                "type": "image",
+                "data": data,
+                "mimeType": mimeType
+            }),
+            types::ToolContent::Resource {
+                uri,
+                mimeType,
+                text,
+                blob,
+            } => {
+                let mut obj = serde_json::json!({
+                    "type": "resource",
+                    "uri": uri
+                });
+                if let Some(mt) = mimeType {
+                    obj["mimeType"] = serde_json::json!(mt);
+                }
+                if let Some(t) = text {
+                    obj["text"] = serde_json::json!(t);
+                }
+                if let Some(b) = blob {
+                    obj["blob"] = serde_json::json!(b);
+                }
+                obj
+            }
+        };
+        results.push(value);
+    }
+
+    serde_json::json!({ "content": results })
+}

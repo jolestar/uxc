@@ -20,8 +20,8 @@ use std::collections::HashMap;
 #[allow(non_camel_case_types)]
 pub enum AdapterEnum {
     OpenAPI(openapi::OpenAPIAdapter),
-    gRPC(grpc::GrpcAdapter),
-    MCP(mcp::McpAdapter),
+    GRpc(grpc::GrpcAdapter),
+    Mcp(mcp::McpAdapter),
     GraphQL(graphql::GraphQLAdapter),
 }
 
@@ -30,8 +30,8 @@ impl Adapter for AdapterEnum {
     fn protocol_type(&self) -> ProtocolType {
         match self {
             AdapterEnum::OpenAPI(_) => ProtocolType::OpenAPI,
-            AdapterEnum::gRPC(_) => ProtocolType::gRPC,
-            AdapterEnum::MCP(_) => ProtocolType::MCP,
+            AdapterEnum::GRpc(_) => ProtocolType::GRpc,
+            AdapterEnum::Mcp(_) => ProtocolType::Mcp,
             AdapterEnum::GraphQL(_) => ProtocolType::GraphQL,
         }
     }
@@ -39,8 +39,8 @@ impl Adapter for AdapterEnum {
     async fn can_handle(&self, url: &str) -> Result<bool> {
         match self {
             AdapterEnum::OpenAPI(a) => a.can_handle(url).await,
-            AdapterEnum::gRPC(a) => a.can_handle(url).await,
-            AdapterEnum::MCP(a) => a.can_handle(url).await,
+            AdapterEnum::GRpc(a) => a.can_handle(url).await,
+            AdapterEnum::Mcp(a) => a.can_handle(url).await,
             AdapterEnum::GraphQL(a) => a.can_handle(url).await,
         }
     }
@@ -48,8 +48,8 @@ impl Adapter for AdapterEnum {
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
         match self {
             AdapterEnum::OpenAPI(a) => a.fetch_schema(url).await,
-            AdapterEnum::gRPC(a) => a.fetch_schema(url).await,
-            AdapterEnum::MCP(a) => a.fetch_schema(url).await,
+            AdapterEnum::GRpc(a) => a.fetch_schema(url).await,
+            AdapterEnum::Mcp(a) => a.fetch_schema(url).await,
             AdapterEnum::GraphQL(a) => a.fetch_schema(url).await,
         }
     }
@@ -57,8 +57,8 @@ impl Adapter for AdapterEnum {
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {
         match self {
             AdapterEnum::OpenAPI(a) => a.list_operations(url).await,
-            AdapterEnum::gRPC(a) => a.list_operations(url).await,
-            AdapterEnum::MCP(a) => a.list_operations(url).await,
+            AdapterEnum::GRpc(a) => a.list_operations(url).await,
+            AdapterEnum::Mcp(a) => a.list_operations(url).await,
             AdapterEnum::GraphQL(a) => a.list_operations(url).await,
         }
     }
@@ -66,8 +66,8 @@ impl Adapter for AdapterEnum {
     async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
         match self {
             AdapterEnum::OpenAPI(a) => a.operation_help(url, operation).await,
-            AdapterEnum::gRPC(a) => a.operation_help(url, operation).await,
-            AdapterEnum::MCP(a) => a.operation_help(url, operation).await,
+            AdapterEnum::GRpc(a) => a.operation_help(url, operation).await,
+            AdapterEnum::Mcp(a) => a.operation_help(url, operation).await,
             AdapterEnum::GraphQL(a) => a.operation_help(url, operation).await,
         }
     }
@@ -80,8 +80,8 @@ impl Adapter for AdapterEnum {
     ) -> Result<ExecutionResult> {
         match self {
             AdapterEnum::OpenAPI(a) => a.execute(url, operation, args).await,
-            AdapterEnum::gRPC(a) => a.execute(url, operation, args).await,
-            AdapterEnum::MCP(a) => a.execute(url, operation, args).await,
+            AdapterEnum::GRpc(a) => a.execute(url, operation, args).await,
+            AdapterEnum::Mcp(a) => a.execute(url, operation, args).await,
             AdapterEnum::GraphQL(a) => a.execute(url, operation, args).await,
         }
     }
@@ -92,8 +92,8 @@ impl Adapter for AdapterEnum {
 #[allow(non_camel_case_types)]
 pub enum ProtocolType {
     OpenAPI,
-    gRPC,
-    MCP,
+    GRpc,
+    Mcp,
     GraphQL,
 }
 
@@ -101,8 +101,8 @@ impl ProtocolType {
     pub fn as_str(&self) -> &'static str {
         match self {
             ProtocolType::OpenAPI => "openapi",
-            ProtocolType::gRPC => "grpc",
-            ProtocolType::MCP => "mcp",
+            ProtocolType::GRpc => "grpc",
+            ProtocolType::Mcp => "mcp",
             ProtocolType::GraphQL => "graphql",
         }
     }
@@ -114,6 +114,7 @@ pub struct Operation {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Vec<Parameter>,
+    #[allow(dead_code)]
     pub return_type: Option<String>,
 }
 
@@ -136,6 +137,7 @@ pub struct ExecutionResult {
 #[derive(Debug, Clone)]
 pub struct ExecutionMetadata {
     pub duration_ms: u64,
+    #[allow(dead_code)]
     pub operation: String,
 }
 
@@ -185,13 +187,13 @@ impl ProtocolDetector {
         // Try gRPC
         let grpc_adapter = grpc::GrpcAdapter::new();
         if grpc_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::gRPC(grpc_adapter));
+            return Ok(AdapterEnum::GRpc(grpc_adapter));
         }
 
         // Try MCP
         let mcp_adapter = mcp::McpAdapter::new();
         if mcp_adapter.can_handle(url).await? {
-            return Ok(AdapterEnum::MCP(mcp_adapter));
+            return Ok(AdapterEnum::Mcp(mcp_adapter));
         }
 
         // Try GraphQL
