@@ -3,6 +3,7 @@
 //! This module provides support for MCP servers via both stdio and HTTP transports.
 
 pub mod client;
+pub mod http_transport;
 pub mod transport;
 pub mod types;
 
@@ -10,10 +11,9 @@ use super::{Adapter, ExecutionResult, Operation, ProtocolType};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 pub use client::McpStdioClient;
+pub use http_transport::McpHttpTransport;
 use serde_json::Value;
 use std::collections::HashMap;
-
-pub struct McpAdapter;
 
 impl McpAdapter {
     pub fn new() -> Self {
@@ -27,9 +27,14 @@ impl McpAdapter {
         // Commands start with executable names or paths
         let lower = url.to_lowercase();
 
-        // Not an HTTP(S) URL
+        // HTTP(S) URLs use HTTP transport, not stdio
         if lower.starts_with("http://") || lower.starts_with("https://") {
             return false;
+        }
+
+        // mcp:// URLs use stdio transport (backward compatibility)
+        if lower.starts_with("mcp://") {
+            return true;
         }
 
         // Check for common command patterns
@@ -44,6 +49,12 @@ impl McpAdapter {
             || url.starts_with("python ")
             || url.starts_with("python3 ")
             || url.contains("\\") // Windows path
+    }
+
+    /// Check if a URL is an HTTP MCP endpoint
+    pub fn is_http_url(url: &str) -> bool {
+        let lower = url.to_lowercase();
+        lower.starts_with("http://") || lower.starts_with("https://")
     }
 
     /// Parse a stdio command into the command and arguments
@@ -110,11 +121,28 @@ impl Adapter for McpAdapter {
             return Ok(schema);
         }
 
-        // For HTTP-based MCP, return schema info
+        // For HTTP-based MCP, connect and get server info
+        if Self::is_http_url(url) {
+            let transport = McpHttpTransport::new(url.to_string())?;
+            let init_result = transport.initialize().await?;
+
+            let schema = serde_json::json!({
+                "protocol": "MCP",
+                "protocolVersion": "2024-11-05",
+                "transport": "http",
+                "url": url,
+                "serverInfo": init_result.serverInfo,
+                "capabilities": init_result.capabilities
+            });
+
+            return Ok(schema);
+        }
+
+        // Default fallback for mcp:// URLs
         let schema = serde_json::json!({
             "protocol": "MCP",
             "protocolVersion": "2024-11-05",
-            "transport": "http",
+            "transport": "stdio",
             "url": url
         });
 
@@ -151,7 +179,33 @@ impl Adapter for McpAdapter {
             return Ok(operations);
         }
 
-        // For HTTP-based MCP, return empty list (not implemented)
+        // For HTTP-based MCP
+        if Self::is_http_url(url) {
+            let transport = McpHttpTransport::new(url.to_string())?;
+            let tools = transport.list_tools().await?;
+
+            let operations = tools
+                .into_iter()
+                .map(|tool| {
+                    let parameters = if let Some(schema) = tool.inputSchema {
+                        parse_schema_to_parameters(&schema)
+                    } else {
+                        Vec::new()
+                    };
+
+                    Operation {
+                        name: tool.name.clone(),
+                        description: Some(tool.description),
+                        parameters,
+                        return_type: Some("ToolContent".to_string()),
+                    }
+                })
+                .collect();
+
+            return Ok(operations);
+        }
+
+        // Default fallback
         Ok(Vec::new())
     }
 
@@ -181,7 +235,31 @@ impl Adapter for McpAdapter {
             bail!("Tool '{}' not found", operation);
         }
 
-        bail!("HTTP-based MCP not yet implemented");
+        // For HTTP-based MCP
+        if Self::is_http_url(url) {
+            let transport = McpHttpTransport::new(url.to_string())?;
+            let tools = transport.list_tools().await?;
+
+            for tool in tools {
+                if tool.name == operation {
+                    let mut help = format!("Tool: {}\n", tool.name);
+                    help.push_str(&format!("Description: {}\n", tool.description));
+
+                    if let Some(schema) = tool.inputSchema {
+                        help.push_str(&format!(
+                            "\nInput Schema:\n{}\n",
+                            serde_json::to_string_pretty(&schema)?
+                        ));
+                    }
+
+                    return Ok(help);
+                }
+            }
+
+            bail!("Tool '{}' not found", operation);
+        }
+
+        bail!("Operation '{}' not found", operation);
     }
 
     async fn execute(
@@ -217,7 +295,32 @@ impl Adapter for McpAdapter {
             });
         }
 
-        bail!("HTTP-based MCP not yet implemented");
+        // For HTTP-based MCP
+        if Self::is_http_url(url) {
+            let transport = McpHttpTransport::new(url.to_string())?;
+
+            // Build arguments JSON
+            let arguments = if args.is_empty() {
+                None
+            } else {
+                Some(Value::Object(args.into_iter().collect()))
+            };
+
+            let result = transport.call_tool(operation, arguments).await?;
+
+            // Convert tool content to a simple JSON output
+            let output = convert_tool_content_to_value(&result.content);
+
+            return Ok(ExecutionResult {
+                data: output,
+                metadata: super::ExecutionMetadata {
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    operation: operation.to_string(),
+                },
+            });
+        }
+
+        bail!("Unsupported MCP URL format: {}", url)
     }
 }
 
