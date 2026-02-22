@@ -5,16 +5,25 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, info};
 
 pub struct OpenAPIAdapter {
     client: reqwest::Client,
+    cache: Option<Arc<dyn crate::cache::Cache>>,
 }
 
 impl OpenAPIAdapter {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
+            cache: None,
         }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 }
 
@@ -78,9 +87,37 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        // Try cache first if available
+        if let Some(cache) = &self.cache {
+            match cache.get(url)? {
+                crate::cache::CacheResult::Hit(schema) => {
+                    debug!("OpenAPI cache hit for: {}", url);
+                    return Ok(schema);
+                }
+                crate::cache::CacheResult::Bypassed => {
+                    debug!("OpenAPI cache bypassed for: {}", url);
+                }
+                crate::cache::CacheResult::Miss => {
+                    debug!("OpenAPI cache miss for: {}", url);
+                }
+            }
+        }
+
+        // Fetch from remote
         let schema_url = format!("{}/openapi.json", url.trim_end_matches('/'));
         let resp = self.client.get(&schema_url).send().await?;
-        Ok(resp.json().await?)
+        let schema: Value = resp.json().await?;
+
+        // Store in cache if available
+        if let Some(cache) = &self.cache {
+            if let Err(e) = cache.put(url, &schema) {
+                debug!("Failed to cache OpenAPI schema: {}", e);
+            } else {
+                info!("Cached OpenAPI schema for: {}", url);
+            }
+        }
+
+        Ok(schema)
     }
 
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>> {

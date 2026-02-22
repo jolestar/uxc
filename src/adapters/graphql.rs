@@ -11,16 +11,25 @@ use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, info};
 
 pub struct GraphQLAdapter {
     client: reqwest::Client,
+    cache: Option<Arc<dyn crate::cache::Cache>>,
 }
 
 impl GraphQLAdapter {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
+            cache: None,
         }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     /// Execute a GraphQL query/mutation with optional variables
@@ -482,6 +491,23 @@ impl Adapter for GraphQLAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        // Try cache first if available
+        if let Some(cache) = &self.cache {
+            match cache.get(url)? {
+                crate::cache::CacheResult::Hit(schema) => {
+                    debug!("GraphQL cache hit for: {}", url);
+                    return Ok(schema);
+                }
+                crate::cache::CacheResult::Bypassed => {
+                    debug!("GraphQL cache bypassed for: {}", url);
+                }
+                crate::cache::CacheResult::Miss => {
+                    debug!("GraphQL cache miss for: {}", url);
+                }
+            }
+        }
+
+        // Fetch from remote
         let introspection_query = Self::get_introspection_query();
 
         let resp = self
@@ -504,6 +530,15 @@ impl Adapter for GraphQLAdapter {
                 "GraphQL introspection failed: {}",
                 serde_json::to_string_pretty(errors)?
             );
+        }
+
+        // Store in cache if available
+        if let Some(cache) = &self.cache {
+            if let Err(e) = cache.put(url, &body) {
+                debug!("Failed to cache GraphQL schema: {}", e);
+            } else {
+                info!("Cached GraphQL schema for: {}", url);
+            }
         }
 
         Ok(body)

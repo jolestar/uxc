@@ -3,9 +3,11 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 mod adapters;
+mod cache;
 mod output;
 
 use adapters::{Adapter, ProtocolDetector};
+use cache::{create_default_cache, CacheConfig};
 use output::OutputEnvelope;
 
 #[derive(Parser)]
@@ -13,9 +15,17 @@ use output::OutputEnvelope;
 #[command(about = "Universal X-Protocol Call", long_about = None)]
 #[command(version = "0.1.0")]
 struct Cli {
-    /// Remote endpoint URL
-    #[arg(value_name = "URL")]
-    url: String,
+    /// Remote endpoint URL (not used with 'cache' subcommand)
+    #[arg(value_name = "URL", global = true)]
+    url: Option<String>,
+
+    /// Disable cache for this operation
+    #[arg(long, global = true)]
+    no_cache: bool,
+
+    /// Cache TTL in seconds
+    #[arg(long, global = true)]
+    cache_ttl: Option<u64>,
 
     #[command(subcommand)]
     command: Commands,
@@ -55,6 +65,28 @@ enum Commands {
         #[arg(short, long)]
         full: bool,
     },
+
+    /// Manage schema cache
+    Cache {
+        #[command(subcommand)]
+        cache_command: CacheCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheCommands {
+    /// Show cache statistics
+    Stats,
+
+    /// Clear cache entries
+    Clear {
+        /// Optional URL to clear specific cache entry
+        url: Option<String>,
+
+        /// Clear all cached entries
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[tokio::main]
@@ -69,11 +101,38 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    info!("UXC v0.1.0 - connecting to {}", cli.url);
+    // Handle cache commands first (they don't require a URL)
+    if let Commands::Cache { cache_command } = &cli.command {
+        return handle_cache_command(cache_command).await;
+    }
+
+    // All other commands require a URL
+    let url = cli.url.ok_or_else(|| anyhow::anyhow!("URL is required"))?;
+
+    info!("UXC v0.1.0 - connecting to {}", url);
+
+    // Create cache configuration
+    let _cache_config = if cli.no_cache {
+        CacheConfig {
+            enabled: false,
+            ..Default::default()
+        }
+    } else if let Some(ttl) = cli.cache_ttl {
+        CacheConfig {
+            ttl,
+            ..Default::default()
+        }
+    } else {
+        // Try to load from file, fall back to defaults
+        CacheConfig::load_from_file().unwrap_or_default()
+    };
+
+    // Create cache instance
+    let cache = create_default_cache()?;
 
     match cli.command {
         Commands::List { verbose } => {
-            handle_list(&cli.url, verbose).await?;
+            handle_list(&url, verbose, cache).await?;
         }
         Commands::Call {
             operation,
@@ -82,22 +141,58 @@ async fn main() -> Result<()> {
             help,
         } => {
             if help {
-                handle_help(&cli.url, &operation).await?;
+                handle_help(&url, &operation, cache).await?;
             } else {
-                handle_call(&cli.url, &operation, args, json).await?;
+                handle_call(&url, &operation, args, json, cache).await?;
             }
         }
         Commands::Inspect { full } => {
-            handle_inspect(&cli.url, full).await?;
+            handle_inspect(&url, full, cache).await?;
+        }
+        Commands::Cache { .. } => {
+            // Already handled above
+            unreachable!();
         }
     }
 
     Ok(())
 }
 
-async fn handle_list(url: &str, verbose: bool) -> Result<()> {
+async fn handle_cache_command(command: &CacheCommands) -> Result<()> {
+    let cache = create_default_cache()?;
+
+    match command {
+        CacheCommands::Stats => {
+            let stats = cache.stats()?;
+            println!("{}", stats.display());
+        }
+        CacheCommands::Clear { url, all } => {
+            if *all {
+                cache.clear()?;
+                println!("Cache cleared successfully.");
+            } else if let Some(url) = url {
+                cache.invalidate(url)?;
+                println!("Cache entry cleared for: {}", url);
+            } else {
+                // If no URL specified and --all not set, show usage
+                println!("Usage: uxc cache clear <url> OR uxc cache clear --all");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_list(
+    url: &str,
+    verbose: bool,
+    cache: std::sync::Arc<dyn cache::Cache>,
+) -> Result<()> {
     let detector = ProtocolDetector::new();
-    let adapter = detector.detect_adapter(url).await?;
+    let mut adapter = detector.detect_adapter(url).await?;
+
+    // Inject cache if adapter supports it
+    adapter = inject_cache_if_supported(adapter, cache);
 
     if verbose {
         println!("Detected protocol: {:?}\n", adapter.protocol_type());
@@ -133,9 +228,13 @@ async fn handle_call(
     operation: &str,
     args: Vec<String>,
     json: Option<String>,
+    cache: std::sync::Arc<dyn cache::Cache>,
 ) -> Result<()> {
     let detector = ProtocolDetector::new();
-    let adapter = detector.detect_adapter(url).await?;
+    let mut adapter = detector.detect_adapter(url).await?;
+
+    // Inject cache if adapter supports it
+    adapter = inject_cache_if_supported(adapter, cache);
 
     // Parse arguments
     let mut args_map = std::collections::HashMap::new();
@@ -170,18 +269,32 @@ async fn handle_call(
     Ok(())
 }
 
-async fn handle_help(url: &str, operation: &str) -> Result<()> {
+async fn handle_help(
+    url: &str,
+    operation: &str,
+    cache: std::sync::Arc<dyn cache::Cache>,
+) -> Result<()> {
     let detector = ProtocolDetector::new();
-    let adapter = detector.detect_adapter(url).await?;
+    let mut adapter = detector.detect_adapter(url).await?;
+
+    // Inject cache if adapter supports it
+    adapter = inject_cache_if_supported(adapter, cache);
 
     let help_text = adapter.operation_help(url, operation).await?;
     println!("{}", help_text);
     Ok(())
 }
 
-async fn handle_inspect(url: &str, full: bool) -> Result<()> {
+async fn handle_inspect(
+    url: &str,
+    full: bool,
+    cache: std::sync::Arc<dyn cache::Cache>,
+) -> Result<()> {
     let detector = ProtocolDetector::new();
-    let adapter = detector.detect_adapter(url).await?;
+    let mut adapter = detector.detect_adapter(url).await?;
+
+    // Inject cache if adapter supports it
+    adapter = inject_cache_if_supported(adapter, cache);
 
     println!("Protocol: {:?}", adapter.protocol_type());
     println!("Endpoint: {}", url);
@@ -192,4 +305,17 @@ async fn handle_inspect(url: &str, full: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Inject cache into adapter if it supports caching
+fn inject_cache_if_supported(
+    adapter: adapters::AdapterEnum,
+    cache: std::sync::Arc<dyn cache::Cache>,
+) -> adapters::AdapterEnum {
+    match adapter {
+        adapters::AdapterEnum::OpenAPI(a) => adapters::AdapterEnum::OpenAPI(a.with_cache(cache)),
+        adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_cache(cache)),
+        adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_cache(cache)),
+        adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_cache(cache)),
+    }
 }
