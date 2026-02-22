@@ -74,8 +74,15 @@ impl McpHttpTransport {
         // Check HTTP status
         if !response.status().is_success() {
             let status = response.status();
-            let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error body".to_string());
-            bail!("MCP server returned HTTP error: {} - {}", status, error_body);
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read error body".to_string());
+            bail!(
+                "MCP server returned HTTP error: {} - {}",
+                status,
+                error_body
+            );
         }
 
         // Parse response
@@ -86,13 +93,17 @@ impl McpHttpTransport {
 
         // Check for JSON-RPC error
         if let Some(error) = json_response.error {
-            bail!("MCP server returned error: {} - {}",
+            bail!(
+                "MCP server returned error: {} - {}",
                 error.code,
-                error.message);
+                error.message
+            );
         }
 
         // Return result
-        json_response.result.context("MCP server response missing result field")
+        json_response
+            .result
+            .context("MCP server response missing result field")
     }
 
     /// Initialize the MCP session
