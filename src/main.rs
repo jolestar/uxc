@@ -3,10 +3,12 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 mod adapters;
+mod auth;
 mod cache;
 mod output;
 
 use adapters::{Adapter, ProtocolDetector};
+use auth::{create_profile_storage, ProfileManager};
 use cache::{create_default_cache, CacheConfig};
 use output::OutputEnvelope;
 
@@ -71,6 +73,12 @@ enum Commands {
         #[command(subcommand)]
         cache_command: CacheCommands,
     },
+
+    /// Manage authentication profiles
+    Auth {
+        #[command(subcommand)]
+        auth_command: AuthCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -89,6 +97,81 @@ enum CacheCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// List all authentication profiles
+    List {
+        /// Show detailed information
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Show information about a specific profile
+    Info {
+        /// Profile name
+        name: String,
+    },
+
+    /// Set or update an authentication profile
+    ///
+    /// WARNING: Passing sensitive credentials (passwords, tokens, API keys) as command-line
+    /// arguments is a security risk. They appear in shell history and process listings.
+    /// Phase 2 will add interactive mode with secure input prompting.
+    Set {
+        /// Profile name
+        #[arg(short, long)]
+        name: String,
+
+        /// Profile type (none, bearer, basic, apikey, oauth2, custom)
+        #[arg(short, long)]
+        profile_type: String,
+
+        /// Endpoint URL
+        #[arg(short, long)]
+        endpoint: String,
+
+        /// Bearer token (for bearer type)
+        ///
+        /// WARNING: This will be visible in shell history and process listings
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Username (for basic type)
+        #[arg(long)]
+        username: Option<String>,
+
+        /// Password (for basic type)
+        ///
+        /// WARNING: This will be visible in shell history and process listings
+        #[arg(long)]
+        password: Option<String>,
+
+        /// API key name (for apikey type)
+        #[arg(long)]
+        key_name: Option<String>,
+
+        /// API key value (for apikey type)
+        ///
+        /// WARNING: This will be visible in shell history and process listings
+        #[arg(long)]
+        key_value: Option<String>,
+
+        /// API key location (header or query, for apikey type)
+        #[arg(long)]
+        key_location: Option<String>,
+
+        /// Description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// Delete an authentication profile
+    Delete {
+        /// Profile name
+        name: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -104,6 +187,11 @@ async fn main() -> Result<()> {
     // Handle cache commands first (they don't require a URL)
     if let Commands::Cache { cache_command } = &cli.command {
         return handle_cache_command(cache_command).await;
+    }
+
+    // Handle auth commands (they don't require a URL)
+    if let Commands::Auth { auth_command } = &cli.command {
+        return handle_auth_command(auth_command).await;
     }
 
     // All other commands require a URL
@@ -150,6 +238,10 @@ async fn main() -> Result<()> {
             handle_inspect(&url, full, cache).await?;
         }
         Commands::Cache { .. } => {
+            // Already handled above
+            unreachable!();
+        }
+        Commands::Auth { .. } => {
             // Already handled above
             unreachable!();
         }
@@ -318,4 +410,224 @@ fn inject_cache_if_supported(
         adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_cache(cache)),
         adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_cache(cache)),
     }
+}
+async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
+    use auth::{AuthProfile, Credentials, ProfileType};
+
+    let profile_manager = create_profile_storage()?;
+
+    match command {
+        AuthCommands::List { verbose } => {
+            let profiles = profile_manager.list_profiles()?;
+
+            if profiles.is_empty() {
+                println!("No authentication profiles found.");
+                println!("Use 'uxc auth set' to create a new profile.");
+            } else {
+                println!("Authentication profiles ({}):", profiles.len());
+                println!();
+
+                for profile in profiles {
+                    if *verbose {
+                        println!("Name: {}", profile.name);
+                        println!("  Type: {:?}", profile.profile_type);
+                        println!("  Endpoint: {}", profile.endpoint);
+
+                        if let Some(desc) = &profile.description {
+                            println!("  Description: {}", desc);
+                        }
+
+                        if !profile.metadata.is_empty() {
+                            println!("  Metadata:");
+                            for (key, value) in &profile.metadata {
+                                println!("    {}: {}", key, value);
+                            }
+                        }
+
+                        println!();
+                    } else {
+                        println!("  {}", profile.name);
+                        if let Some(desc) = &profile.description {
+                            println!("    - {}", desc);
+                        }
+                    }
+                }
+            }
+        }
+
+        AuthCommands::Info { name } => {
+            match profile_manager.get_profile(name)? {
+                Some(profile) => {
+                    println!("Profile: {}", profile.name);
+                    println!("Type: {:?}", profile.profile_type);
+                    println!("Endpoint: {}", profile.endpoint);
+
+                    if let Some(desc) = &profile.description {
+                        println!("Description: {}", desc);
+                    }
+
+                    if !profile.metadata.is_empty() {
+                        println!("\nMetadata:");
+                        for (key, value) in &profile.metadata {
+                            println!("  {}: {}", key, value);
+                        }
+                    }
+
+                    // Note: Phase 1 does not encrypt, so we show credentials
+                    // Phase 2 will hide sensitive information
+                    println!("\nCredentials:");
+                    match &profile.credentials {
+                        Credentials::None => println!("  None"),
+                        Credentials::Bearer { token } => {
+                            println!("  Type: Bearer");
+                            println!("  Token: {}", token);
+                        }
+                        Credentials::Basic { username, password } => {
+                            println!("  Type: Basic");
+                            println!("  Username: {}", username);
+                            println!("  Password: {}", password);
+                        }
+                        Credentials::ApiKey {
+                            key_name,
+                            key_value,
+                            location,
+                        } => {
+                            println!("  Type: API Key");
+                            println!("  Key Name: {}", key_name);
+                            println!("  Key Value: {}", key_value);
+                            println!("  Location: {}", location);
+                        }
+                        Credentials::OAuth2 {
+                            client_id,
+                            token_url,
+                            scope,
+                            ..
+                        } => {
+                            println!("  Type: OAuth2");
+                            println!("  Client ID: {}", client_id);
+                            println!("  Token URL: {}", token_url);
+                            if let Some(scope) = scope {
+                                println!("  Scope: {}", scope);
+                            }
+                        }
+                        Credentials::Custom(map) => {
+                            println!("  Type: Custom");
+                            for (key, value) in map {
+                                println!("  {}: {}", key, value);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    println!("Profile '{}' not found.", name);
+                    println!("Use 'uxc auth set' to create a new profile.");
+                }
+            }
+        }
+
+        AuthCommands::Set {
+            name,
+            profile_type,
+            endpoint,
+            token,
+            username,
+            password,
+            key_name,
+            key_value,
+            key_location,
+            description,
+        } => {
+            // Parse profile type
+            let profile_type = match profile_type.to_lowercase().as_str() {
+                "none" => ProfileType::None,
+                "bearer" => ProfileType::Bearer,
+                "basic" => ProfileType::Basic,
+                "apikey" | "api-key" => ProfileType::ApiKey,
+                "oauth2" | "oauth" => ProfileType::OAuth2,
+                "custom" => ProfileType::Custom,
+                _ => return Err(anyhow::anyhow!("Invalid profile type: {}", profile_type)),
+            };
+
+            // Build credentials based on profile type
+            let credentials = match profile_type {
+                ProfileType::None => Credentials::None,
+                ProfileType::Bearer => {
+                    let token = token.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("--token is required for bearer authentication")
+                    })?;
+                    Credentials::Bearer {
+                        token: token.clone(),
+                    }
+                }
+                ProfileType::Basic => {
+                    let username = username.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("--username is required for basic authentication")
+                    })?;
+                    let password = password.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("--password is required for basic authentication")
+                    })?;
+                    Credentials::Basic {
+                        username: username.clone(),
+                        password: password.clone(),
+                    }
+                }
+                ProfileType::ApiKey => {
+                    let key_name = key_name.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("--key-name is required for apikey authentication")
+                    })?;
+                    let key_value = key_value.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("--key-value is required for apikey authentication")
+                    })?;
+                    Credentials::ApiKey {
+                        key_name: key_name.clone(),
+                        key_value: key_value.clone(),
+                        location: key_location.clone().unwrap_or_else(|| "header".to_string()),
+                    }
+                }
+                ProfileType::OAuth2 => {
+                    return Err(anyhow::anyhow!(
+                        "OAuth2 authentication is not yet supported in Phase 1"
+                    ))
+                }
+                ProfileType::Custom => {
+                    return Err(anyhow::anyhow!(
+                        "Custom authentication is not yet supported in Phase 1"
+                    ))
+                }
+            };
+
+            // Create profile
+            let mut profile =
+                AuthProfile::new(name.clone(), profile_type, endpoint.clone(), credentials);
+
+            // Add description if provided
+            if let Some(desc) = description {
+                profile = profile.with_description(desc.clone());
+            }
+
+            // Save profile
+            profile_manager.set_profile(&profile)?;
+
+            println!("Profile '{}' saved successfully.", name);
+
+            // Warning about security (Phase 1)
+            println!();
+            println!("⚠️  WARNING: Credentials are stored in plain text (Phase 1).");
+            println!("   Phase 2 will add encryption support for secure credential storage.");
+        }
+
+        AuthCommands::Delete { name } => {
+            match profile_manager.delete_profile(name) {
+                Ok(_) => {
+                    println!("Profile '{}' deleted successfully.", name);
+                }
+                Err(e) => {
+                    println!("Error deleting profile: {}", e);
+                    println!("Use 'uxc auth list' to see available profiles.");
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

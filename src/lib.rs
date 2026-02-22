@@ -5,12 +5,14 @@
 #![allow(non_camel_case_types)]
 
 pub mod adapters;
+pub mod auth;
 pub mod cache;
 pub mod error;
 pub mod output;
 pub mod protocol;
 
 pub use adapters::{Adapter, ProtocolType};
+pub use auth::{create_profile_storage, AuthProfile, ProfileManager, ProfileType};
 pub use cache::{create_cache, create_default_cache, Cache, CacheConfig, CacheResult};
 pub use error::{Result, UxcError};
 pub use output::OutputEnvelope;
