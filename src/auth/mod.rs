@@ -162,40 +162,36 @@ impl Profiles {
         // api_key = "..."
         // type = "bearer"
 
-        let root = toml::from_str::<toml::Value>(&contents)
-            .with_context(|| format!("Failed to parse TOML from file: {:?}", path))?;
+        if let Ok(root) = toml::from_str::<toml::Value>(&contents) {
+            // Look for [profile] section
+            if let Some(profile_section) = root.get("profile").and_then(|v| v.as_table()) {
+                for (name, value) in profile_section {
+                    if let Some(table) = value.as_table() {
+                        if let Some(api_key) = table.get("api_key").and_then(|v| v.as_str()) {
+                            let auth_type = table
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("bearer");
 
-        // Look for [profile] section
-        let profile_section = root.get("profile")
-            .and_then(|v| v.as_table())
-            .ok_or_else(|| anyhow::anyhow!("Missing [profile] section in TOML file: {:?}", path))?;
+                            let auth_type =
+                                auth_type.parse::<AuthType>().unwrap_or(AuthType::Bearer);
 
-        for (name, value) in profile_section {
-            let table = value.as_table()
-                .ok_or_else(|| anyhow::anyhow!("Profile '{}' is not a table", name))?;
+                            let description = table
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
 
-            let api_key = table.get("api_key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Profile '{}' missing 'api_key' field", name))?;
+                            let profile = Profile {
+                                api_key: api_key.to_string(),
+                                auth_type,
+                                description,
+                            };
 
-            let auth_type_str = table.get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("bearer");
-
-            let auth_type = auth_type_str.parse::<AuthType>()
-                .with_context(|| format!("Failed to parse auth_type '{}' for profile '{}'", auth_type_str, name))?;
-
-            let description = table.get("description")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            let profile = Profile {
-                api_key: api_key.to_string(),
-                auth_type,
-                description,
-            };
-
-            profiles.profiles.insert(name.clone(), profile);
+                            profiles.profiles.insert(name.clone(), profile);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(profiles)
