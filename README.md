@@ -128,6 +128,25 @@ This makes UXC ideal for:
 
 ---
 
+## Cache Management
+
+```bash
+# View cache statistics
+uxc cache stats
+
+# Clear cache for specific endpoint
+uxc cache clear https://api.example.com
+
+# Clear all cache
+uxc cache clear --all
+
+# Disable cache for this operation
+uxc https://api.example.com list --no-cache
+
+# Use custom TTL (in seconds)
+uxc https://api.example.com list --cache-ttl 3600
+```
+
 ## Installation
 
 ### From Source
@@ -314,12 +333,17 @@ It is an execution interface.
 * ✅ MCP HTTP transport
 * ✅ Advanced help generation
 
-### 🚧 Phase 3 (PLANNED)
+### ✅ Phase 3 (COMPLETE)
+
+* ✅ Schema caching
+* ✅ MCP HTTP transport
+* ✅ Advanced help generation
+
+### 🚧 Phase 4 (PLANNED)
 
 * UXCd daemon
 * Connection pooling
 * Authentication profiles
-* Schema caching
 * Capability allowlists
 * Audit logging
 
@@ -355,12 +379,11 @@ UXC makes remote schema executable.
 **Recent Milestones**:
 - ✅ Milestone 1: OpenAPI & MCP adapters (Complete)
 - ✅ Milestone 2: Multi-protocol support (Complete)
-- 🚧 Milestone 3: Advanced features (In Progress)
+- ✅ Milestone 3: Schema caching & MCP HTTP transport (Complete)
 
 **Known Limitations**:
 - No connection pooling yet
 - No authentication/profile management yet
-- Schema caching not yet implemented
 
 ---
 
@@ -369,11 +392,13 @@ UXC makes remote schema executable.
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
 **Areas of Interest**:
-- Connection pooling and caching
+- Connection pooling
 - Authentication profiles
 - Additional protocol adapters (SOAP/WSDL, Thrift, etc.)
 - Performance optimizations
-- Schema caching implementation
+- UXCd daemon
+- Capability allowlists
+- Audit logging
 
 ---
 
