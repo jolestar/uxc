@@ -203,14 +203,16 @@ uxc https://graphql.example.com query/Viewer --fields "id login avatarUrl"
 ### MCP (Model Context Protocol)
 
 ```bash
-# List available tools/resources
-uxc mcp://server-name list
+# HTTP transport (recommended for production)
+uxc https://mcp-server.example.com list
+uxc https://mcp-server.example.com tool_name param1=value1
 
-# Execute an MCP tool
-uxc mcp://server-name tool_name param1=value1
+# stdio transport (for local development)
+uxc mcp://server-name list
+uxc "npx @modelcontextprotocol/server-filesystem /tmp" list
 
 # Read an MCP resource
-uxc mcp://server-name resource:/path/to/resource
+uxc https://mcp-server.example.com resource:/path/to/resource
 ```
 
 ---
@@ -309,7 +311,7 @@ It is an execution interface.
 
 * ✅ gRPC reflection support
 * ✅ GraphQL support
-* 🚧 Schema caching (in progress)
+* ✅ MCP HTTP transport
 * ✅ Advanced help generation
 
 ### 🚧 Phase 3 (PLANNED)
@@ -317,7 +319,7 @@ It is an execution interface.
 * UXCd daemon
 * Connection pooling
 * Authentication profiles
-* MCP HTTP transport
+* Schema caching
 * Capability allowlists
 * Audit logging
 
@@ -343,7 +345,7 @@ UXC makes remote schema executable.
 - ✅ OpenAPI 3.x
 - ✅ gRPC (with Server Reflection Protocol)
 - ✅ GraphQL (with Introspection)
-- ✅ MCP (Model Context Protocol) - stdio transport
+- ✅ MCP (Model Context Protocol) - HTTP & stdio transports
 
 **Platforms**:
 - ✅ Linux (x86_64)
@@ -356,7 +358,6 @@ UXC makes remote schema executable.
 - 🚧 Milestone 3: Advanced features (In Progress)
 
 **Known Limitations**:
-- MCP adapter uses stdio transport; HTTP transport planned
 - No connection pooling yet
 - No authentication/profile management yet
 - Schema caching not yet implemented
@@ -368,11 +369,11 @@ UXC makes remote schema executable.
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
 **Areas of Interest**:
-- HTTP transport for MCP
 - Connection pooling and caching
 - Authentication profiles
 - Additional protocol adapters (SOAP/WSDL, Thrift, etc.)
 - Performance optimizations
+- Schema caching implementation
 
 ---
 
