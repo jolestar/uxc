@@ -38,11 +38,11 @@ jobs:
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           elif [[ "$(uname)" == "Darwin" ]]; then
             brew install protobuf
-          elif [[ "$(uname)" == "MINGW"* ]] || [[ "$(uname)" == "MSYS"* ]]; then
+          elif [[ "$(uname)" == MINGW* ]] || [[ "$(uname)" == MSYS* ]]; then
             # Windows - install protoc via chocolatey
             choco install protoc -y
-            # Add to PATH for future steps
-            echo "$ENV:ProgramFiles\protobuf\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            # Add to PATH for future steps (using $GITHUB_PATH file directly for bash)
+            echo "C:\\ProgramData\\chocolatey\\lib\\protoc\\tools" >> $GITHUB_PATH
           fi
 
       - name: Cache dependencies
@@ -136,11 +136,11 @@ jobs:
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           elif [[ "$(uname)" == "Darwin" ]]; then
             brew install protobuf
-          elif [[ "$(uname)" == "MINGW"* ]] || [[ "$(uname)" == "MSYS"* ]]; then
+          elif [[ "$(uname)" == MINGW* ]] || [[ "$(uname)" == MSYS* ]]; then
             # Windows - install protoc via chocolatey
             choco install protoc -y
-            # Add to PATH for future steps
-            echo "$ENV:ProgramFiles\protobuf\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            # Add to PATH for future steps (using $GITHUB_PATH file directly for bash)
+            echo "C:\\ProgramData\\chocolatey\\lib\\protoc\\tools" >> $GITHUB_PATH
           fi
 
       - name: Build
