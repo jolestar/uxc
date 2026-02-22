@@ -30,7 +30,6 @@ pub const PROFILES_FILE: &str = "profiles.toml";
 /// Authentication type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-#[allow(clippy::derivable_impls)] // Manual impl needed for serde compatibility with #[serde(rename_all)]
 pub enum AuthType {
     /// Bearer token authentication
     Bearer,
@@ -41,6 +40,7 @@ pub enum AuthType {
 }
 
 impl Default for AuthType {
+    #[allow(clippy::derivable_impls)] // Manual impl needed for serde compatibility with #[serde(rename_all)]
     fn default() -> Self {
         Self::Bearer
     }
