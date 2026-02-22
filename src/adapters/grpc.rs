@@ -135,9 +135,8 @@ impl GrpcAdapter {
     /// List all services via reflection
     async fn list_services_reflection(&self, endpoint: &Endpoint) -> Result<Vec<String>> {
         let channel = endpoint.connect().await?;
-        let mut client =
-            reflection::server_reflection_client::ServerReflectionClient::new(channel)
-                .max_decoding_message_size(usize::MAX);
+        let mut client = reflection::server_reflection_client::ServerReflectionClient::new(channel)
+            .max_decoding_message_size(usize::MAX);
 
         let (tx, rx) = tokio::sync::mpsc::channel(4);
 
@@ -158,9 +157,9 @@ impl GrpcAdapter {
 
         let mut services = Vec::new();
         while let Some(response) = stream.message().await? {
-            if let Some(reflection::server_reflection_response::MessageResponse::ListServicesResponse(
-                ls,
-            )) = response.message_response
+            if let Some(
+                reflection::server_reflection_response::MessageResponse::ListServicesResponse(ls),
+            ) = response.message_response
             {
                 for service in ls.service {
                     services.push(service.name);
@@ -178,9 +177,8 @@ impl GrpcAdapter {
         service_name: &str,
     ) -> Result<FileDescriptorProto> {
         let channel = endpoint.connect().await?;
-        let mut client =
-            reflection::server_reflection_client::ServerReflectionClient::new(channel)
-                .max_decoding_message_size(usize::MAX);
+        let mut client = reflection::server_reflection_client::ServerReflectionClient::new(channel)
+            .max_decoding_message_size(usize::MAX);
 
         let (tx, rx) = tokio::sync::mpsc::channel(4);
 
@@ -204,14 +202,13 @@ impl GrpcAdapter {
             .into_inner();
 
         while let Some(response) = stream.message().await? {
-            if let Some(reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(
-                fd,
-            )) = response.message_response
+            if let Some(
+                reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(fd),
+            ) = response.message_response
             {
                 if let Some(descriptor_bytes) = fd.file_descriptor_proto.first() {
-                    let descriptor =
-                        FileDescriptorProto::decode(descriptor_bytes.as_slice())
-                            .context("Failed to decode file descriptor")?;
+                    let descriptor = FileDescriptorProto::decode(descriptor_bytes.as_slice())
+                        .context("Failed to decode file descriptor")?;
                     return Ok(descriptor);
                 }
             }
@@ -268,10 +265,7 @@ impl GrpcAdapter {
                 continue;
             }
 
-            match self
-                .get_service_descriptor(&endpoint, &service_name)
-                .await
-            {
+            match self.get_service_descriptor(&endpoint, &service_name).await {
                 Ok(descriptor) => {
                     if let Ok(info) = self.parse_service_info(&descriptor) {
                         services.insert(service_name.clone(), info);
@@ -334,16 +328,13 @@ impl GrpcAdapter {
             .get(&service_name)
             .ok_or_else(|| anyhow!("Service '{}' not found", service_name))?;
 
-        let method_info = service_info
-            .methods
-            .get(&method_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "Method '{}' not found in service '{}'",
-                    method_name,
-                    service_name
-                )
-            })?;
+        let method_info = service_info.methods.get(&method_name).ok_or_else(|| {
+            anyhow!(
+                "Method '{}' not found in service '{}'",
+                method_name,
+                service_name
+            )
+        })?;
 
         Ok(method_info.clone())
     }

@@ -69,7 +69,10 @@ impl GraphQLAdapter {
                 let error_messages: Vec<String> = error_array
                     .iter()
                     .map(|e| {
-                        let message = e.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+                        let message = e
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error");
                         let mut error_str = format!("- {}", message);
 
                         // Add location info if available
@@ -79,7 +82,8 @@ impl GraphQLAdapter {
                                     loc.get("line").and_then(|l| l.as_i64()),
                                     loc.get("column").and_then(|c| c.as_i64()),
                                 ) {
-                                    error_str.push_str(&format!(" [line {}, column {}]", line, col));
+                                    error_str
+                                        .push_str(&format!(" [line {}, column {}]", line, col));
                                 }
                             }
                         }
@@ -220,7 +224,10 @@ impl GraphQLAdapter {
 
     /// Convert GraphQL type to readable string representation
     fn type_to_string(type_info: &Value) -> String {
-        let kind = type_info.get("kind").and_then(|k| k.as_str()).unwrap_or("UNKNOWN");
+        let kind = type_info
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("UNKNOWN");
 
         match kind {
             "NON_NULL" => {
@@ -270,9 +277,7 @@ impl GraphQLAdapter {
 
                     let parameters = Self::parse_field_args(field);
 
-                    let return_type = field
-                        .get("type")
-                        .map(Self::type_to_string);
+                    let return_type = field.get("type").map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("query/{}", name),
@@ -301,9 +306,7 @@ impl GraphQLAdapter {
 
                     let parameters = Self::parse_field_args(field);
 
-                    let return_type = field
-                        .get("type")
-                        .map(Self::type_to_string);
+                    let return_type = field.get("type").map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("mutation/{}", name),
@@ -332,9 +335,7 @@ impl GraphQLAdapter {
 
                     let parameters = Self::parse_field_args(field);
 
-                    let return_type = field
-                        .get("type")
-                        .map(Self::type_to_string);
+                    let return_type = field.get("type").map(Self::type_to_string);
 
                     operations.push(Operation {
                         name: format!("subscription/{}", name),
@@ -363,7 +364,8 @@ impl GraphQLAdapter {
                         Some(Parameter {
                             name: name.to_string(),
                             param_type: Self::type_to_string(type_info),
-                            required: type_info.get("kind").and_then(|k| k.as_str()) == Some("NON_NULL"),
+                            required: type_info.get("kind").and_then(|k| k.as_str())
+                                == Some("NON_NULL"),
                             description: arg
                                 .get("description")
                                 .and_then(|d| d.as_str())
@@ -491,10 +493,7 @@ impl Adapter for GraphQLAdapter {
             .await?;
 
         if !resp.status().is_success() {
-            bail!(
-                "Failed to fetch GraphQL schema: HTTP {}",
-                resp.status()
-            );
+            bail!("Failed to fetch GraphQL schema: HTTP {}", resp.status());
         }
 
         let body: Value = resp.json().await?;
@@ -719,7 +718,10 @@ mod tests {
                 }
             }
         });
-        assert_eq!(GraphQLAdapter::type_to_string(&list_of_non_null), "[String!]");
+        assert_eq!(
+            GraphQLAdapter::type_to_string(&list_of_non_null),
+            "[String!]"
+        );
     }
 
     #[test]
@@ -727,8 +729,7 @@ mod tests {
         let query = GraphQLAdapter::build_query(OperationType::Query, "viewer", None);
         assert_eq!(query, "query { viewer }");
 
-        let query =
-            GraphQLAdapter::build_query(OperationType::Query, "viewer", Some("id login"));
+        let query = GraphQLAdapter::build_query(OperationType::Query, "viewer", Some("id login"));
         assert_eq!(query, "query { viewer { id login } }");
 
         let mutation = GraphQLAdapter::build_query(OperationType::Mutation, "addStar", None);
