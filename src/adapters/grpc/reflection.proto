@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package grpc.reflection.v1;
+
+option go_package = "google.golang.org/grpc/reflection/grpc_reflection_v1";
+
+service ServerReflection {
+  rpc ServerReflectionInfo(stream ServerReflectionRequest)
+      returns (stream ServerReflectionResponse);
+}
+
+message ServerReflectionRequest {
+  string host = 1;
+  // One of the following
+  message ListServicesRequest {}
+  message FileByFilenameRequest {
+    string filename = 1;
+  }
+  message FileContainingSymbolRequest {
+    string symbol = 1;
+  }
+  message FileContainingExtensionRequest {
+    string containing_type = 1;
+    string extension_number = 2;
+  }
+  message AllExtensionNumbersOfTypeRequest {
+    string containing_type = 1;
+  }
+  message FileDescriptorSetRequest {}
+
+  oneof message_request {
+    ListServicesRequest list_services = 2;
+    FileByFilenameRequest file_by_filename = 3;
+    FileContainingSymbolRequest file_containing_symbol = 4;
+    FileContainingExtensionRequest file_containing_extension = 5;
+    AllExtensionNumbersOfTypeRequest all_extension_numbers_of_type = 6;
+    FileDescriptorSetRequest file_descriptor_set = 7;
+  }
+}
+
+message ServerReflectionResponse {
+  string valid_host = 1;
+  ServerReflectionRequest original_request = 2;
+
+  message ListServicesResponse {
+    repeated ServiceResponse service = 1;
+  }
+
+  message ServiceResponse {
+    string name = 1;
+  }
+
+  message FileDescriptorResponse {
+    repeated bytes file_descriptor_proto = 1;
+  }
+
+  message AllExtensionNumbersResponse {
+    string base_type_name = 1;
+    repeated int32 extension_number = 2;
+  }
+
+  oneof message_response {
+    ListServicesResponse list_services_response = 3;
+    FileDescriptorResponse file_descriptor_response = 4;
+    AllExtensionNumbersResponse all_extension_numbers_response = 5;
+    // error_response is omitted for simplicity
+  }
+}
