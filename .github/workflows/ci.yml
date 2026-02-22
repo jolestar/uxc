@@ -87,7 +87,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+
+      - name: Install protobuf compiler
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Check formatting
         run: cargo fmt -- --check
