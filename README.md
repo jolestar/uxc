@@ -2,6 +2,10 @@
 
 **Universal X-Protocol Call**
 
+[![CI](https://github.com/jolestar/uxc/workflows/CI/badge.svg)](https://github.com/jolestar/uxc/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org)
+
 UXC is a schema-driven, multi-protocol RPC execution runtime.
 
 It turns remote, schema-exposed services into executable command-line capabilities — without SDKs, code generation, or preconfigured server aliases.
@@ -124,30 +128,89 @@ This makes UXC ideal for:
 
 ---
 
+## Installation
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/jolestar/uxc.git
+cd uxc
+
+# Build and install
+cargo install --path .
+```
+
+### Using Cargo (Coming Soon)
+
+```bash
+cargo install uxc
+```
+
 ## Example Usage
 
-### Discover available operations
+### OpenAPI / REST APIs
 
 ```bash
+# List available operations
 uxc https://api.example.com list
+
+# Get operation help
+uxc https://api.example.com users.get --help
+
+# Execute with parameters
+uxc https://api.example.com users.get id=42
+
+# Execute with JSON input
+uxc https://api.example.com users.create --json '{"name":"Alice","email":"alice@example.com"}'
 ```
 
-### Inspect an operation
+### gRPC Services
 
 ```bash
-uxc https://api.example.com user.get --help
+# List all services via reflection
+uxc grpc.example.com:443 list
+
+# List operations in a service
+uxc grpc.example.com:443 list --service UserService
+
+# Call a unary RPC
+uxc grpc.example.com:443 GetUser user_id=42
+
+# Call a server-streaming RPC
+uxc grpc.example.com:443 StreamUsers --stream
 ```
 
-### Execute with key-value arguments
+### GraphQL APIs
 
 ```bash
-uxc https://api.example.com user.get id=42
+# List available queries/mutations/subscriptions
+uxc https://graphql.example.com list
+
+# Execute a query
+uxc https://graphql.example.com query/Viewer
+
+# Execute with parameters
+uxc https://graphql.example.com query/User id=42
+
+# Execute a mutation
+uxc https://graphql.example.com mutation/AddStar starredId=123
+
+# Execute with custom fields
+uxc https://graphql.example.com query/Viewer --fields "id login avatarUrl"
 ```
 
-### Execute with JSON input
+### MCP (Model Context Protocol)
 
 ```bash
-uxc https://api.example.com user.create --json '{"name":"Alice"}'
+# List available tools/resources
+uxc mcp://server-name list
+
+# Execute an MCP tool
+uxc mcp://server-name tool_name param1=value1
+
+# Read an MCP resource
+uxc mcp://server-name resource:/path/to/resource
 ```
 
 ---
@@ -235,25 +298,26 @@ It is an execution interface.
 
 ## Roadmap
 
-### Phase 1
+### ✅ Phase 1 (COMPLETE)
 
-* OpenAPI adapter
-* MCP adapter
-* Stable JSON output
-* CLI-only mode
+* ✅ OpenAPI adapter
+* ✅ MCP adapter (stdio transport)
+* ✅ Stable JSON output
+* ✅ CLI-only mode
 
-### Phase 2
+### ✅ Phase 2 (COMPLETE)
 
-* gRPC reflection support
-* GraphQL support
-* Schema caching
-* Advanced help generation
+* ✅ gRPC reflection support
+* ✅ GraphQL support
+* 🚧 Schema caching (in progress)
+* ✅ Advanced help generation
 
-### Phase 3
+### 🚧 Phase 3 (PLANNED)
 
 * UXCd daemon
 * Connection pooling
 * Authentication profiles
+* MCP HTTP transport
 * Capability allowlists
 * Audit logging
 
@@ -268,6 +332,53 @@ Because services describe themselves.
 Because execution should be dynamic.
 
 UXC makes remote schema executable.
+
+---
+
+## Development Status
+
+**Current Version**: v0.1.0 (Alpha)
+
+**Supported Protocols**:
+- ✅ OpenAPI 3.x
+- ✅ gRPC (with Server Reflection Protocol)
+- ✅ GraphQL (with Introspection)
+- ✅ MCP (Model Context Protocol) - stdio transport
+
+**Platforms**:
+- ✅ Linux (x86_64)
+- ✅ macOS (x86_64, ARM64)
+- ✅ Windows (x86_64)
+
+**Recent Milestones**:
+- ✅ Milestone 1: OpenAPI & MCP adapters (Complete)
+- ✅ Milestone 2: Multi-protocol support (Complete)
+- 🚧 Milestone 3: Advanced features (In Progress)
+
+**Known Limitations**:
+- MCP adapter uses stdio transport; HTTP transport planned
+- No connection pooling yet
+- No authentication/profile management yet
+- Schema caching not yet implemented
+
+---
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit issues or pull requests.
+
+**Areas of Interest**:
+- HTTP transport for MCP
+- Connection pooling and caching
+- Authentication profiles
+- Additional protocol adapters (SOAP/WSDL, Thrift, etc.)
+- Performance optimizations
+
+---
+
+## License
+
+MIT License - see LICENSE file for details
 
 ---
 
