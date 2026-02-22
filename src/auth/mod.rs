@@ -28,21 +28,16 @@ pub const DEFAULT_PROFILES_DIR: &str = ".uxc";
 pub const PROFILES_FILE: &str = "profiles.toml";
 
 /// Authentication type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthType {
     /// Bearer token authentication
+    #[default]
     Bearer,
     /// API key authentication
     ApiKey,
     /// Basic authentication
     Basic,
-}
-
-impl Default for AuthType {
-    fn default() -> Self {
-        Self::Bearer
-    }
 }
 
 impl std::fmt::Display for AuthType {
