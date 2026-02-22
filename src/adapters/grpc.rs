@@ -65,7 +65,7 @@ impl Adapter for GrpcAdapter {
 
         // Try direct gRPC port detection
         // If the URL specifies a port that's commonly used for gRPC
-        if let Some(port_str) = base_url.split(':').last() {
+        if let Some(port_str) = base_url.split(':').next_back() {
             if let Ok(port) = port_str.parse::<u16>() {
                 // Common gRPC ports
                 if port == 50051 || port == 50052 || port == 50053 || port == 9090 {
