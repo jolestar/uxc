@@ -5,6 +5,7 @@
 #![allow(non_camel_case_types)]
 
 pub mod adapters;
+pub mod auth;
 pub mod cache;
 pub mod error;
 pub mod output;

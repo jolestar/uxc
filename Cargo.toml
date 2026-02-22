@@ -26,6 +26,9 @@ url = "2.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# TOML Support
+toml = "0.8"
+
 # Async Runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -63,7 +66,8 @@ prost-types = "0.12"
 [dev-dependencies]
 tokio-test = "0.4"
 mockito = "1.2"
-tempfile = "3.10"
+# tempfile 3.10 has issues with getrandom 0.4, use older version
+tempfile = ">=3.8, <3.10"
 
 [build-dependencies]
 tonic-build = "0.10"
