@@ -60,9 +60,9 @@ enum Commands {
         #[arg(long)]
         json: Option<String>,
 
-        /// Show help for this operation
-        #[arg(long, short = 'h')]
-        help: bool,
+        /// Show remote help for this operation
+        #[arg(long = "op-help")]
+        op_help: bool,
     },
 
     /// Inspect endpoint/schema
@@ -141,15 +141,33 @@ enum AuthCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
+        .with_writer(std::io::stderr)
         .init();
 
+    if let Err(err) = run().await {
+        let code = error_code(&err);
+        let envelope = OutputEnvelope::error(code, &err.to_string());
+
+        match envelope.to_json() {
+            Ok(json) => println!("{}", json),
+            Err(ser_err) => {
+                eprintln!("failed to serialize error output: {}", ser_err);
+                eprintln!("{}", err);
+            }
+        }
+
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Determine profile name: CLI flag > env var > default
@@ -215,7 +233,10 @@ async fn main() -> Result<()> {
                 // - for the implicit default profile, continue without auth
                 // - for an explicitly selected non-default profile, return an error
                 if !profile_explicitly_selected && profile_name == "default" {
-                    info!("Could not load profiles: {}, continuing without authentication", e);
+                    info!(
+                        "Could not load profiles: {}, continuing without authentication",
+                        e
+                    );
                     None
                 } else {
                     return Err(anyhow::anyhow!(
@@ -240,9 +261,9 @@ async fn main() -> Result<()> {
             operation,
             args,
             json,
-            help,
+            op_help,
         } => {
-            if help {
+            if op_help {
                 handle_help(&url, &operation, cache, auth_profile).await?;
             } else {
                 handle_call(&url, &operation, args, json, cache, auth_profile).await?;
@@ -262,6 +283,31 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn error_code(err: &anyhow::Error) -> &'static str {
+    let message = err.to_string().to_lowercase();
+
+    if message.contains("no adapter found")
+        || message.contains("protocol detection failed")
+        || message.contains("unsupported protocol")
+    {
+        "PROTOCOL_DETECTION_FAILED"
+    } else if message.contains("operation not found")
+        || message.contains("method") && message.contains("not found")
+        || message.contains("tool") && message.contains("not found")
+    {
+        "OPERATION_NOT_FOUND"
+    } else if message.contains("invalid")
+        || message.contains("missing")
+        || message.contains("parse")
+    {
+        "INVALID_ARGUMENT"
+    } else if message.contains("unsupported") {
+        "UNSUPPORTED_OPERATION"
+    } else {
+        "EXECUTION_FAILED"
+    }
 }
 
 async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
@@ -533,8 +579,12 @@ fn inject_auth_if_supported(
 ) -> adapters::AdapterEnum {
     match profile {
         Some(profile) => match adapter {
-            adapters::AdapterEnum::OpenAPI(a) => adapters::AdapterEnum::OpenAPI(a.with_auth(profile)),
-            adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_auth(profile)),
+            adapters::AdapterEnum::OpenAPI(a) => {
+                adapters::AdapterEnum::OpenAPI(a.with_auth(profile))
+            }
+            adapters::AdapterEnum::GraphQL(a) => {
+                adapters::AdapterEnum::GraphQL(a.with_auth(profile))
+            }
             adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_auth(profile)),
             adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_auth(profile)),
         },
