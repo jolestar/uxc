@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `call --help` no longer conflicts with clap auto-help; operation help uses `--op-help`
+- CLI failures now return structured JSON error envelope
+- gRPC detection no longer treats common ports as implicit gRPC
+- gRPC `execute` no longer returns placeholder payload
+- OpenAPI fetch now reuses discovered schema endpoint (`/swagger.json`, `/api-docs`, etc.)
+- MCP stdio request/response correlation restored
+- MCP HTTP endpoint discovery now probes host-level endpoints
+- Auth integration tests now isolate `HOME` mutations with a process-wide lock
+
+### Changed
+- Enabled HTTPS support for HTTP-based adapters via `reqwest` + `rustls-tls`
+
 ## [0.1.0] - 2026-02-23
 
 ### Added
@@ -29,21 +42,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP (Model Context Protocol) server support with stdio and HTTP transports
 
 #### CLI Features
-- `uxc list <url>` - List available operations for any protocol
-- `uxc call <url> <operation>` - Execute operations with parameters
-- `uxc inspect <url>` - Inspect endpoint schema and capabilities
+- `uxc <url> list` - List available operations for any protocol
+- `uxc <url> call <operation>` - Execute operations with parameters
+- `uxc <url> inspect` - Inspect endpoint schema and capabilities
 - `uxc auth` commands - Manage authentication profiles
 - `uxc cache stats|clear` - View and clear schema cache
-- JSON output envelope with `--output json` flag
+- JSON output envelope for `call` success/failure
 - Schema caching with configurable TTL
-- Cache configuration via `--cache-ttl` flag and `UXC_CACHE_TTL` env var
+- Cache configuration via `--cache-ttl` flag
 
 #### Developer Experience
 - Automatic protocol detection from URLs
 - Built-in schema caching to reduce network calls
-- Color-coded JSON output with syntax highlighting
 - Comprehensive error messages
-- Progress indicators for long-running operations
 
 #### Configuration
 - Profile storage in `~/.uxc/profiles.toml`
@@ -63,10 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform support (Linux, macOS, Windows)
 
 ### Known Limitations
-- gRPC dynamic invocation returns placeholder (requires generated types at build time)
+- gRPC invocation currently supports unary calls only
+- gRPC runtime calls require `grpcurl` binary on PATH
 - Profile encryption not implemented (planned for v0.2.0, see Issue #29)
 - No per-endpoint profile configuration yet
-- auth_integration_test.rs has 2 pre-existing test failures (not in release scope)
 
 ### Documentation
 - Comprehensive help text for all commands

@@ -47,7 +47,7 @@ UXC does not require registering server aliases.
 
 ```bash
 uxc https://api.example.com list
-uxc https://api.example.com user.get id=42
+uxc https://api.example.com call "GET /users/42"
 ```
 
 Any compliant endpoint can be called directly.
@@ -70,7 +70,7 @@ UXC automatically:
 * Generates contextual help
 * Validates arguments
 * Executes calls
-* Returns structured JSON
+* Returns structured JSON for `call`
 
 No manual client definitions required.
 
@@ -92,7 +92,7 @@ The CLI interface remains consistent across protocols.
 
 ### 4. Deterministic Machine Output
 
-UXC always outputs a stable JSON envelope:
+`uxc ... call ...` outputs a stable JSON envelope:
 
 ```json
 {
@@ -107,7 +107,7 @@ UXC always outputs a stable JSON envelope:
 }
 ```
 
-Errors are structured and predictable:
+Command failures are structured and predictable:
 
 ```json
 {
@@ -175,30 +175,26 @@ cargo install uxc
 uxc https://api.example.com list
 
 # Get operation help
-uxc https://api.example.com users.get --help
+uxc https://api.example.com call "GET /users/{id}" --op-help
 
 # Execute with parameters
-uxc https://api.example.com users.get id=42
+uxc https://api.example.com call "GET /users/{id}" --json '{"id":42}'
 
 # Execute with JSON input
-uxc https://api.example.com users.create --json '{"name":"Alice","email":"alice@example.com"}'
+uxc https://api.example.com call "POST /users" --json '{"name":"Alice","email":"alice@example.com"}'
 ```
 
 ### gRPC Services
 
 ```bash
 # List all services via reflection
-uxc grpc.example.com:443 list
-
-# List operations in a service
-uxc grpc.example.com:443 list --service UserService
+uxc grpc.example.com:9000 list
 
 # Call a unary RPC
-uxc grpc.example.com:443 GetUser user_id=42
-
-# Call a server-streaming RPC
-uxc grpc.example.com:443 StreamUsers --stream
+uxc grpc.example.com:9000 call addsvc.Add/Sum --json '{"a":1,"b":2}'
 ```
+
+Note: gRPC unary invocation uses the `grpcurl` binary at runtime.
 
 ### GraphQL APIs
 
@@ -207,16 +203,13 @@ uxc grpc.example.com:443 StreamUsers --stream
 uxc https://graphql.example.com list
 
 # Execute a query
-uxc https://graphql.example.com query/Viewer
+uxc https://graphql.example.com call query/viewer
 
 # Execute with parameters
-uxc https://graphql.example.com query/User id=42
+uxc https://graphql.example.com call query/user --json '{"id":"42"}'
 
 # Execute a mutation
-uxc https://graphql.example.com mutation/AddStar starredId=123
-
-# Execute with custom fields
-uxc https://graphql.example.com query/Viewer --fields "id login avatarUrl"
+uxc https://graphql.example.com call mutation/addStar --json '{"starredId":"123"}'
 ```
 
 ### MCP (Model Context Protocol)
@@ -224,15 +217,68 @@ uxc https://graphql.example.com query/Viewer --fields "id login avatarUrl"
 ```bash
 # HTTP transport (recommended for production)
 uxc https://mcp-server.example.com list
-uxc https://mcp-server.example.com tool_name param1=value1
+uxc https://mcp-server.example.com call tool_name --json '{"param1":"value1"}'
 
 # stdio transport (for local development)
-uxc mcp://server-name list
-uxc "npx @modelcontextprotocol/server-filesystem /tmp" list
-
-# Read an MCP resource
-uxc https://mcp-server.example.com resource:/path/to/resource
+uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list
+uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" call list_directory --json '{"path":"/tmp"}'
 ```
+
+## Public Test Endpoints (No API Key)
+
+These endpoints are useful for protocol availability checks without API keys.
+Verified on 2026-02-23.
+
+### OpenAPI
+
+- Endpoint: `https://petstore3.swagger.io/api/v3`
+- Verify schema:
+
+```bash
+curl -sS https://petstore3.swagger.io/api/v3/openapi.json | jq -r '.openapi, .info.title'
+```
+
+### GraphQL
+
+- Endpoint: `https://countries.trevorblades.com/`
+- Verify introspection:
+
+```bash
+curl -sS https://countries.trevorblades.com/ \
+  -H 'content-type: application/json' \
+  --data '{"query":"{ __schema { queryType { name } } }"}' \
+  | jq -r '.data.__schema.queryType.name'
+```
+
+### gRPC (Server Reflection)
+
+- Endpoint (plaintext): `grpcb.in:9000`
+- Endpoint (TLS): `grpcb.in:9001`
+- Verify reflection:
+
+```bash
+grpcurl -plaintext grpcb.in:9000 list
+grpcurl grpcb.in:9001 list
+```
+
+### MCP (HTTP)
+
+- Endpoint: `https://mcp.deepwiki.com/mcp`
+- Verify `initialize` (DeepWiki uses streamable HTTP/SSE response):
+
+```bash
+curl -sS https://mcp.deepwiki.com/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"uxc-check","version":"0.1"}}}'
+```
+
+Note: this endpoint is publicly reachable without an API key for basic calls. Some MCP clients that only expect JSON (not SSE) may need transport updates.
+
+### MCP (stdio, local)
+
+- Command: `npx -y @modelcontextprotocol/server-filesystem /tmp`
+- This is useful as a local no-key MCP baseline.
 
 ---
 
@@ -240,10 +286,10 @@ uxc https://mcp-server.example.com resource:/path/to/resource
 
 UXC determines the protocol via lightweight probing:
 
-1. Check for OpenAPI endpoints
-2. Attempt gRPC reflection
-3. Attempt MCP discovery
-4. Attempt GraphQL introspection
+1. Attempt MCP stdio/HTTP discovery
+2. Attempt GraphQL introspection
+3. Check OpenAPI endpoints
+4. Attempt gRPC reflection
 5. Fallback or fail gracefully
 
 Each protocol is handled by a dedicated adapter.
@@ -317,38 +363,6 @@ It is an execution interface.
 
 ---
 
-## Roadmap
-
-### ✅ Phase 1 (COMPLETE)
-
-* ✅ OpenAPI adapter
-* ✅ MCP adapter (stdio transport)
-* ✅ Stable JSON output
-* ✅ CLI-only mode
-
-### ✅ Phase 2 (COMPLETE)
-
-* ✅ gRPC reflection support
-* ✅ GraphQL support
-* ✅ MCP HTTP transport
-* ✅ Advanced help generation
-
-### ✅ Phase 3 (COMPLETE)
-
-* ✅ Schema caching
-* ✅ MCP HTTP transport
-* ✅ Advanced help generation
-
-### 🚧 Phase 4 (PLANNED)
-
-* UXCd daemon
-* Connection pooling
-* Authentication profiles
-* Capability allowlists
-* Audit logging
-
----
-
 ## Why Universal X-Protocol Call?
 
 Because infrastructure is no longer protocol-bound.
@@ -376,14 +390,10 @@ UXC makes remote schema executable.
 - ✅ macOS (x86_64, ARM64)
 - ✅ Windows (x86_64)
 
-**Recent Milestones**:
-- ✅ Milestone 1: OpenAPI & MCP adapters (Complete)
-- ✅ Milestone 2: Multi-protocol support (Complete)
-- ✅ Milestone 3: Schema caching & MCP HTTP transport (Complete)
-
 **Known Limitations**:
+- gRPC currently supports unary invocation only
+- gRPC runtime calls require `grpcurl` to be installed
 - No connection pooling yet
-- No authentication/profile management yet
 
 ---
 
@@ -405,11 +415,3 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 ## License
 
 MIT License - see LICENSE file for details
-
----
-
-If you'd like, I can next:
-
-* Design the formal CLI command tree (`uxc list`, `uxc inspect`, etc.)
-* Write a lightweight technical spec (v0.1 RFC)
-* Or design the adapter interface abstraction for clean multi-protocol extensibility
