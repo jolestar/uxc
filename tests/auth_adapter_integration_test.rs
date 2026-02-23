@@ -77,9 +77,12 @@ fn test_auth_apply_to_request_bearer() {
     let req = client.get("http://example.com");
     let req = uxc::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
 
-    // We can't easily inspect the built request, but we can verify it compiles
-    // and doesn't panic. In a real scenario, we'd use a mock server to verify.
-    let _ = req;
+    // Build the request and verify headers
+    let built_req = req.build().expect("Failed to build request");
+    assert_eq!(
+        built_req.headers().get("authorization"),
+        Some(&"Bearer test-token-12345".parse().unwrap())
+    );
 }
 
 #[test]
@@ -92,7 +95,12 @@ fn test_auth_apply_to_request_api_key() {
     let req = client.post("http://example.com");
     let req = uxc::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
 
-    let _ = req;
+    // Build the request and verify headers
+    let built_req = req.build().expect("Failed to build request");
+    assert_eq!(
+        built_req.headers().get("x-api-key"),
+        Some(&"test-api-key".parse().unwrap())
+    );
 }
 
 #[test]
@@ -105,7 +113,13 @@ fn test_auth_apply_to_request_basic() {
     let req = client.get("http://example.com");
     let req = uxc::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
 
-    let _ = req;
+    // Build the request and verify headers
+    let built_req = req.build().expect("Failed to build request");
+    // "user:password" Base64-encoded is "dXNlcjpwYXNzd29yZA=="
+    assert_eq!(
+        built_req.headers().get("authorization"),
+        Some(&"Basic dXNlcjpwYXNzd29yZA==".parse().unwrap())
+    );
 }
 
 #[test]
