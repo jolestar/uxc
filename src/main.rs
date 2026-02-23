@@ -120,7 +120,7 @@ enum AuthCommands {
         api_key: String,
 
         /// Authentication type (bearer, api_key, basic)
-        #[arg(long, default_value = "bearer")]
+        #[arg(short = 't', long, default_value = "bearer")]
         auth_type: String,
 
         /// Profile description
