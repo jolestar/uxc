@@ -4,20 +4,45 @@
 //! including file I/O, TOML parsing, and profile management.
 
 use std::fs;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 use uxc::auth::{AuthType, Profile, Profiles};
 
-/// Helper function to create a test environment with a temporary directory
-///
-/// IMPORTANT: Tests using this must be marked with `#[tokio::test(flavor = "multi_thread", worker_threads = 1)]`
-/// or use serial execution to avoid race conditions with the HOME environment variable.
-fn setup_test_env() -> TempDir {
+fn home_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct TestEnv {
+    temp_dir: TempDir,
+    _home_guard: MutexGuard<'static, ()>,
+    previous_home: Option<std::ffi::OsString>,
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        match &self.previous_home {
+            Some(prev) => std::env::set_var("HOME", prev),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
+/// Helper function to create a test environment with a temporary directory.
+/// Uses a process-wide lock to avoid concurrent HOME mutations across tests.
+fn setup_test_env() -> TestEnv {
+    let guard = home_env_lock().lock().expect("Failed to lock HOME env guard");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let previous_home = std::env::var_os("HOME");
 
     // Set HOME to the temp directory for testing
     std::env::set_var("HOME", temp_dir.path());
 
-    temp_dir
+    TestEnv {
+        temp_dir,
+        _home_guard: guard,
+        previous_home,
+    }
 }
 
 #[test]
@@ -50,7 +75,7 @@ fn test_save_and_load_profiles() {
     profiles.save_profiles().expect("Failed to save profiles");
 
     // Verify the file was created
-    let profiles_path = temp_dir.path().join(".uxc/profiles.toml");
+    let profiles_path = temp_dir.temp_dir.path().join(".uxc/profiles.toml");
     assert!(profiles_path.exists(), "Profiles file should exist");
 
     // Load profiles and verify
@@ -225,7 +250,7 @@ fn test_toml_format() {
     profiles.save_profiles().expect("Failed to save profiles");
 
     // Read and verify the TOML format
-    let profiles_path = temp_dir.path().join(".uxc/profiles.toml");
+    let profiles_path = temp_dir.temp_dir.path().join(".uxc/profiles.toml");
     let contents = fs::read_to_string(&profiles_path).expect("Failed to read profiles file");
 
     // Verify the format contains expected elements
