@@ -148,22 +148,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Handle cache commands first (they don't require a URL)
-    if let Commands::Cache { cache_command } = &cli.command {
-        return handle_cache_command(cache_command).await;
-    }
-
-    // Handle auth commands (they don't require a URL)
-    if let Commands::Auth { auth_command } = &cli.command {
-        return handle_auth_command(auth_command).await;
-    }
-
-    // All other commands require a URL
-    let url = cli.url.ok_or_else(|| anyhow::anyhow!("URL is required"))?;
-
-    info!("UXC v0.1.0 - connecting to {}", url);
-
-    // Create cache configuration
+    // Create cache configuration for all commands
     let cache_config = if cli.no_cache {
         CacheConfig {
             enabled: false,
@@ -178,6 +163,21 @@ async fn main() -> Result<()> {
         // Try to load from file, fall back to defaults
         CacheConfig::load_from_file().unwrap_or_default()
     };
+
+    // Handle cache commands first (they don't require a URL)
+    if let Commands::Cache { cache_command } = &cli.command {
+        return handle_cache_command(cache_command, cache_config).await;
+    }
+
+    // Handle auth commands (they don't require a URL)
+    if let Commands::Auth { auth_command } = &cli.command {
+        return handle_auth_command(auth_command).await;
+    }
+
+    // All other commands require a URL
+    let url = cli.url.ok_or_else(|| anyhow::anyhow!("URL is required"))?;
+
+    info!("UXC v0.1.0 - connecting to {}", url);
 
     // Create cache instance with configuration
     let cache = cache::create_cache(cache_config)?;
@@ -214,8 +214,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_cache_command(command: &CacheCommands) -> Result<()> {
-    let cache = create_default_cache()?;
+async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
+    let cache = cache::create_cache(cache_config)?;
 
     match command {
         CacheCommands::Stats => {
