@@ -37,8 +37,8 @@ fn setup_test_env() -> TestEnv {
 }
 
 #[test]
-fn test_profile_selection_cli_flag_precedence() {
-    // Test precedence: CLI flag > env var > default
+fn test_profile_storage() {
+    // Test profile storage and retrieval
     let _test_env = setup_test_env();
 
     // Create test profiles
