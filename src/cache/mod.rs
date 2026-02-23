@@ -7,9 +7,13 @@ mod config;
 mod stats;
 mod storage;
 
-pub use config::{CacheConfig, CacheOptions};
+pub use config::CacheConfig;
+#[allow(unused_imports)]
+pub use config::CacheOptions;
 pub use stats::CacheStats;
-pub use storage::{CacheEntry, CacheStorage, SchemaCache};
+pub use storage::SchemaCache;
+#[allow(unused_imports)]
+pub use storage::{CacheEntry, CacheStorage};
 
 use anyhow::Result;
 use serde_json::Value;
@@ -33,14 +37,17 @@ pub enum CacheResult {
 }
 
 impl CacheResult {
+    #[allow(dead_code)]
     pub fn is_hit(&self) -> bool {
         matches!(self, CacheResult::Hit(_))
     }
 
+    #[allow(dead_code)]
     pub fn is_miss(&self) -> bool {
         matches!(self, CacheResult::Miss)
     }
 
+    #[allow(dead_code)]
     pub fn is_bypassed(&self) -> bool {
         matches!(self, CacheResult::Bypassed)
     }
@@ -74,6 +81,7 @@ pub trait Cache: Send + Sync {
     fn stats(&self) -> Result<CacheStats>;
 
     /// Check if caching is enabled
+    #[allow(dead_code)]
     fn is_enabled(&self) -> bool;
 }
 

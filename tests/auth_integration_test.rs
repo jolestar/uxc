@@ -294,3 +294,88 @@ fn test_auth_type_display() {
     assert_eq!(AuthType::ApiKey.to_string(), "api_key");
     assert_eq!(AuthType::Basic.to_string(), "basic");
 }
+
+#[test]
+fn test_profile_name_validation_valid_names() {
+    let _temp_dir = setup_test_env();
+
+    let mut profiles = Profiles::new();
+    let profile = Profile::new("sk-test-key".to_string(), AuthType::Bearer);
+
+    // Valid names: letters, numbers, underscores, hyphens
+    assert!(profiles
+        .set_profile("default".to_string(), profile.clone())
+        .is_ok());
+    assert!(profiles
+        .set_profile("production".to_string(), profile.clone())
+        .is_ok());
+    assert!(profiles
+        .set_profile("test_profile".to_string(), profile.clone())
+        .is_ok());
+    assert!(profiles
+        .set_profile("test-profile".to_string(), profile.clone())
+        .is_ok());
+    assert!(profiles
+        .set_profile("test123".to_string(), profile.clone())
+        .is_ok());
+    assert!(profiles
+        .set_profile("my_prod_2024".to_string(), profile)
+        .is_ok());
+}
+
+#[test]
+fn test_profile_name_validation_invalid_characters() {
+    let _temp_dir = setup_test_env();
+
+    let mut profiles = Profiles::new();
+    let profile = Profile::new("sk-test-key".to_string(), AuthType::Bearer);
+
+    // Invalid characters: spaces, dots, special characters
+    let result = profiles.set_profile("test profile".to_string(), profile.clone());
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("invalid characters"));
+
+    let result = profiles.set_profile("test.profile".to_string(), profile.clone());
+    assert!(result.is_err());
+
+    let result = profiles.set_profile("test/profile".to_string(), profile.clone());
+    assert!(result.is_err());
+
+    let result = profiles.set_profile("test.profile".to_string(), profile.clone());
+    assert!(result.is_err());
+
+    let result = profiles.set_profile("test@profile".to_string(), profile.clone());
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_profile_name_validation_empty_name() {
+    let _temp_dir = setup_test_env();
+
+    let mut profiles = Profiles::new();
+    let profile = Profile::new("sk-test-key".to_string(), AuthType::Bearer);
+
+    // Empty name should be rejected
+    let result = profiles.set_profile("".to_string(), profile);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+}
+
+#[test]
+fn test_profile_name_validation_starts_with_digit() {
+    let _temp_dir = setup_test_env();
+
+    let mut profiles = Profiles::new();
+    let profile = Profile::new("sk-test-key".to_string(), AuthType::Bearer);
+
+    // Name starting with digit should be rejected
+    let result = profiles.set_profile("123profile".to_string(), profile);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("cannot start with a digit"));
+}

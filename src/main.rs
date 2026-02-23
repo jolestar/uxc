@@ -120,7 +120,7 @@ enum AuthCommands {
         api_key: String,
 
         /// Authentication type (bearer, api_key, basic)
-        #[arg(long, default_value = "bearer")]
+        #[arg(short = 't', long, default_value = "bearer")]
         auth_type: String,
 
         /// Profile description
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
     info!("UXC v0.1.0 - connecting to {}", url);
 
     // Create cache configuration
-    let _cache_config = if cli.no_cache {
+    let cache_config = if cli.no_cache {
         CacheConfig {
             enabled: false,
             ..Default::default()
@@ -179,8 +179,8 @@ async fn main() -> Result<()> {
         CacheConfig::load_from_file().unwrap_or_default()
     };
 
-    // Create cache instance
-    let cache = create_default_cache()?;
+    // Create cache instance with configuration
+    let cache = cache::create_cache(cache_config)?;
 
     match cli.command {
         Commands::List { verbose } => {

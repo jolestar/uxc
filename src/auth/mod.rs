@@ -191,8 +191,43 @@ impl Profiles {
         ))
     }
 
+    /// Validate a profile name for TOML compatibility
+    ///
+    /// Restricts profile names to safe characters for TOML table names.
+    /// Allows only ASCII letters, digits, underscores, and hyphens.
+    fn validate_profile_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            anyhow::bail!("Profile name cannot be empty");
+        }
+
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            anyhow::bail!(
+                "Profile name '{}' contains invalid characters. Allowed characters: letters, digits, '_', '-'",
+                name
+            );
+        }
+
+        // Ensure name doesn't start with a digit (TOML table names shouldn't)
+        if name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            anyhow::bail!("Profile name '{}' cannot start with a digit", name);
+        }
+
+        Ok(())
+    }
+
     /// Set a profile
     pub fn set_profile(&mut self, name: String, profile: Profile) -> Result<()> {
+        // Validate profile name before inserting
+        Self::validate_profile_name(&name)?;
+
         self.profiles.insert(name, profile);
         Ok(())
     }
