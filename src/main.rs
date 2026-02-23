@@ -153,9 +153,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Determine profile name: CLI flag > env var > default
-    let profile_name = cli.profile
-        .or_else(|| std::env::var("UXC_PROFILE").ok())
-        .unwrap_or_else(|| "default".to_string());
+    // Also track whether the profile was explicitly selected (not implicit default)
+    let (profile_name, profile_explicitly_selected) = if cli.profile.is_some() {
+        (cli.profile.unwrap(), true)
+    } else if std::env::var("UXC_PROFILE").is_ok() {
+        (std::env::var("UXC_PROFILE").unwrap(), true)
+    } else {
+        ("default".to_string(), false)
+    };
 
     // Create cache configuration for all commands
     let cache_config = if cli.no_cache {
@@ -196,7 +201,7 @@ async fn main() -> Result<()> {
                     Ok(profile) => Some(profile.clone()),
                     Err(e) => {
                         // If profile not found and it's the default "default", just continue without auth
-                        if profile_name == "default" {
+                        if !profile_explicitly_selected && profile_name == "default" {
                             info!("No 'default' profile found, continuing without authentication");
                             None
                         } else {
@@ -206,9 +211,18 @@ async fn main() -> Result<()> {
                 }
             }
             Err(e) => {
-                // If profiles file doesn't exist or can't be loaded, continue without auth
-                info!("Could not load profiles: {}, continuing without authentication", e);
-                None
+                // If profiles file doesn't exist or can't be loaded:
+                // - for the implicit default profile, continue without auth
+                // - for an explicitly selected non-default profile, return an error
+                if !profile_explicitly_selected && profile_name == "default" {
+                    info!("Could not load profiles: {}, continuing without authentication", e);
+                    None
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Failed to load profile '{}': {}. Please run 'uxc auth set {} --api-key <key>' to create it.",
+                        profile_name, e, profile_name
+                    ));
+                }
             }
         }
     } else {
