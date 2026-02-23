@@ -1,7 +1,7 @@
 //! MCP HTTP transport for communicating with MCP servers over HTTP/HTTPS
 
 use super::types::*;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;

@@ -3,10 +3,12 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 mod adapters;
+mod auth;
 mod cache;
 mod output;
 
 use adapters::{Adapter, ProtocolDetector};
+use auth::{AuthType, Profile, Profiles};
 use cache::{create_default_cache, CacheConfig};
 use output::OutputEnvelope;
 
@@ -71,6 +73,12 @@ enum Commands {
         #[command(subcommand)]
         cache_command: CacheCommands,
     },
+
+    /// Manage authentication profiles
+    Auth {
+        #[command(subcommand)]
+        auth_command: AuthCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -89,6 +97,45 @@ enum CacheCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// List all authentication profiles
+    List,
+
+    /// Show information about a specific profile
+    Info {
+        /// Profile name
+        #[arg(value_name = "PROFILE")]
+        profile: String,
+    },
+
+    /// Set or update an authentication profile
+    Set {
+        /// Profile name
+        #[arg(value_name = "PROFILE")]
+        profile: String,
+
+        /// API key or token
+        #[arg(long)]
+        api_key: String,
+
+        /// Authentication type (bearer, api_key, basic)
+        #[arg(long, default_value = "bearer")]
+        auth_type: String,
+
+        /// Profile description
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// Remove an authentication profile
+    Remove {
+        /// Profile name
+        #[arg(value_name = "PROFILE")]
+        profile: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -104,6 +151,11 @@ async fn main() -> Result<()> {
     // Handle cache commands first (they don't require a URL)
     if let Commands::Cache { cache_command } = &cli.command {
         return handle_cache_command(cache_command).await;
+    }
+
+    // Handle auth commands (they don't require a URL)
+    if let Commands::Auth { auth_command } = &cli.command {
+        return handle_auth_command(auth_command).await;
     }
 
     // All other commands require a URL
@@ -153,6 +205,10 @@ async fn main() -> Result<()> {
             // Already handled above
             unreachable!();
         }
+        Commands::Auth { .. } => {
+            // Already handled above
+            unreachable!();
+        }
     }
 
     Ok(())
@@ -177,6 +233,90 @@ async fn handle_cache_command(command: &CacheCommands) -> Result<()> {
                 // If no URL specified and --all not set, show usage
                 println!("Usage: uxc cache clear <url> OR uxc cache clear --all");
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
+    match command {
+        AuthCommands::List => {
+            let profiles = Profiles::load_profiles()?;
+
+            if profiles.count() == 0 {
+                println!("No profiles found.");
+                println!("\nCreate a profile with: uxc auth set <profile> --api-key <key>");
+                return Ok(());
+            }
+
+            println!("Authentication Profiles:");
+            println!();
+
+            for name in profiles.profile_names() {
+                let profile = profiles.get_profile(&name)?;
+                println!("  {}", name);
+                println!("    Type: {}", profile.auth_type);
+                println!("    API Key: {}", profile.mask_api_key());
+                if let Some(desc) = &profile.description {
+                    println!("    Description: {}", desc);
+                }
+                println!();
+            }
+        }
+        AuthCommands::Info { profile } => {
+            let profiles = Profiles::load_profiles()?;
+            let profile_data = profiles.get_profile(profile)?;
+
+            println!("Profile: {}", profile);
+            println!("  Type: {}", profile_data.auth_type);
+            println!("  API Key: {}", profile_data.mask_api_key());
+            if let Some(desc) = &profile_data.description {
+                println!("  Description: {}", desc);
+            }
+        }
+        AuthCommands::Set {
+            profile,
+            api_key,
+            auth_type,
+            description,
+        } => {
+            let auth_type = auth_type
+                .parse::<AuthType>()
+                .map_err(|e| anyhow::anyhow!("Invalid auth type: {}", e))?;
+
+            // Clone api_key for display before moving it
+            let api_key_display = api_key.clone();
+            let auth_type_display = auth_type.clone();
+
+            let mut profile_obj = Profile::new(api_key.clone(), auth_type);
+            if let Some(desc) = description {
+                profile_obj = profile_obj.with_description(desc.clone());
+            }
+
+            let mut profiles = Profiles::load_profiles()?;
+            profiles.set_profile(profile.clone(), profile_obj)?;
+            profiles.save_profiles()?;
+
+            println!("Profile '{}' saved successfully.", profile);
+            println!(
+                "  API Key: {}",
+                Profile::new(api_key_display, auth_type_display).mask_api_key()
+            );
+        }
+        AuthCommands::Remove { profile } => {
+            let mut profiles = Profiles::load_profiles()?;
+
+            if !profiles.has_profile(profile) {
+                println!("Profile '{}' not found.", profile);
+                println!("\nAvailable profiles: {}", profiles.list_names());
+                return Ok(());
+            }
+
+            profiles.remove_profile(profile)?;
+            profiles.save_profiles()?;
+
+            println!("Profile '{}' removed successfully.", profile);
         }
     }
 
