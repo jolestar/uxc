@@ -113,7 +113,8 @@ fn test_auth_to_metadata_bearer() {
     let metadata = uxc::auth::auth_to_metadata(&AuthType::Bearer, "test-token")
         .expect("Failed to create metadata");
 
-    assert!(metadata.contains_key("authorization"));
+    let auth_value = metadata.get("authorization").expect("Authorization header not found");
+    assert_eq!(auth_value, "Bearer test-token");
 }
 
 #[test]
@@ -121,7 +122,8 @@ fn test_auth_to_metadata_api_key() {
     let metadata = uxc::auth::auth_to_metadata(&AuthType::ApiKey, "test-api-key")
         .expect("Failed to create metadata");
 
-    assert!(metadata.contains_key("x-api-key"));
+    let api_key_value = metadata.get("x-api-key").expect("x-api-key header not found");
+    assert_eq!(api_key_value, "test-api-key");
 }
 
 #[test]
@@ -129,7 +131,9 @@ fn test_auth_to_metadata_basic() {
     let metadata = uxc::auth::auth_to_metadata(&AuthType::Basic, "user:password")
         .expect("Failed to create metadata");
 
-    assert!(metadata.contains_key("authorization"));
+    // "user:password" Base64-encoded is "dXNlcjpwYXNzd29yZA=="
+    let auth_value = metadata.get("authorization").expect("Authorization header not found");
+    assert_eq!(auth_value, "Basic dXNlcjpwYXNzd29yZA==");
 }
 
 #[test]
