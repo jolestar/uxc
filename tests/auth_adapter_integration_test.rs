@@ -3,23 +3,43 @@
 //! These tests verify that authentication profiles are correctly applied
 //! to HTTP requests for different protocol adapters.
 
+use std::env;
+use std::ffi::OsString;
 use tempfile::TempDir;
 use uxc::auth::{AuthType, Profile, Profiles};
 
+struct TestEnv {
+    _temp_dir: TempDir,
+    prev_home: Option<OsString>,
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        match &self.prev_home {
+            Some(prev) => env::set_var("HOME", prev),
+            None => env::remove_var("HOME"),
+        }
+    }
+}
+
 /// Helper function to create a test environment with a temporary directory
-fn setup_test_env() -> TempDir {
+fn setup_test_env() -> TestEnv {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-    // Set HOME to the temp directory for testing
-    std::env::set_var("HOME", temp_dir.path());
+    // Capture the previous HOME value and set HOME to the temp directory for testing
+    let prev_home = env::var_os("HOME");
+    env::set_var("HOME", temp_dir.path());
 
-    temp_dir
+    TestEnv {
+        _temp_dir: temp_dir,
+        prev_home,
+    }
 }
 
 #[test]
 fn test_profile_selection_cli_flag_precedence() {
     // Test precedence: CLI flag > env var > default
-    let temp_dir = setup_test_env();
+    let _test_env = setup_test_env();
 
     // Create test profiles
     let mut profiles = Profiles::new();
