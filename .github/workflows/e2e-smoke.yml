@@ -22,8 +22,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler jq
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -32,7 +32,7 @@ jobs:
 
       - name: Install grpcurl
         run: |
-          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.1
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Setup Node
@@ -88,7 +88,8 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          mcp_stdio_list="$($UXC "npx -y @modelcontextprotocol/server-filesystem /tmp" list)"
+          MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp'
+          mcp_stdio_list="$("$UXC" "$MCP_STDIO" list)"
           grep -q "list_directory" <<<"$mcp_stdio_list"
-          $UXC "npx -y @modelcontextprotocol/server-filesystem /tmp" call list_directory --json '{"path":"/tmp"}' \
+          "$UXC" "$MCP_STDIO" call list_directory --json '{"path":"/tmp"}' \
             | jq -e '.ok == true and .protocol == "mcp"'

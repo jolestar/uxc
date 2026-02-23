@@ -72,9 +72,6 @@ mockito = "1.2"
 # tempfile 3.10 has issues with this project's pinned getrandom 0.2, use older version
 tempfile = ">=3.8, <3.10"
 
-[build-dependencies]
-tonic-build = "0.10"
-
 [[bin]]
 name = "uxc"
 path = "src/main.rs"
