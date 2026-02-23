@@ -7,10 +7,6 @@
 //! - TLS and h2c (cleartext) support
 //! - Proper error handling and status code mapping
 
-pub mod reflection {
-    tonic::include_proto!("grpc.reflection.v1");
-}
-
 use super::{Adapter, ExecutionResult, Operation, Parameter, ProtocolType};
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
@@ -25,8 +21,9 @@ use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tonic::Status;
-use tracing::{debug, info};
 use crate::auth::Profile;
+use tonic_reflection::pb as reflection;
+use tracing::{debug, info};
 
 /// gRPC adapter implementation
 pub struct GrpcAdapter {
@@ -122,7 +119,7 @@ impl GrpcAdapter {
         let request = ServerReflectionRequest {
             host: String::new(),
             message_request: Some(server_reflection_request::MessageRequest::ListServices(
-                server_reflection_request::ListServicesRequest {},
+                String::new(),
             )),
         };
 
@@ -131,21 +128,37 @@ impl GrpcAdapter {
 
         let result = tokio::time::timeout(
             Duration::from_secs(3),
-            reflection_client.server_reflection_info(ReceiverStream::new(rx)),
+            async {
+                let response = reflection_client.server_reflection_info(ReceiverStream::new(rx)).await;
+                match response {
+                    Ok(streaming) => {
+                        let mut stream = streaming.into_inner();
+                        while let Some(message) = stream.message().await? {
+                            match message.message_response {
+                                Some(
+                                    reflection::server_reflection_response::MessageResponse::ListServicesResponse(_),
+                                ) => return Ok::<bool, anyhow::Error>(true),
+                                Some(
+                                    reflection::server_reflection_response::MessageResponse::ErrorResponse(err),
+                                ) => {
+                                    if err.error_code == tonic::Code::Unimplemented as i32 {
+                                        return Ok::<bool, anyhow::Error>(false);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Ok::<bool, anyhow::Error>(false)
+                    }
+                    Err(_) => Ok::<bool, anyhow::Error>(false),
+                }
+            },
         )
         .await;
 
         match result {
-            Ok(Ok(_)) => Ok(true),
-            Ok(Err(e)) => {
-                // Status::NOT_FOUND means reflection is not available
-                if e.code() == tonic::Code::Unimplemented {
-                    Ok(false)
-                } else {
-                    // Other errors might mean reflection is available
-                    Ok(true)
-                }
-            }
+            Ok(Ok(has_reflection)) => Ok(has_reflection),
+            Ok(Err(_)) => Ok(false),
             Err(_) => Ok(false), // Timeout
         }
     }
@@ -161,7 +174,7 @@ impl GrpcAdapter {
         let request = ServerReflectionRequest {
             host: String::new(),
             message_request: Some(server_reflection_request::MessageRequest::ListServices(
-                server_reflection_request::ListServicesRequest {},
+                String::new(),
             )),
         };
 
@@ -202,13 +215,9 @@ impl GrpcAdapter {
 
         let request = ServerReflectionRequest {
             host: String::new(),
-            message_request: Some(
-                server_reflection_request::MessageRequest::FileContainingSymbol(
-                    server_reflection_request::FileContainingSymbolRequest {
-                        symbol: service_name.to_string(),
-                    },
-                ),
-            ),
+            message_request: Some(server_reflection_request::MessageRequest::FileContainingSymbol(
+                service_name.to_string(),
+            )),
         };
 
         tx.send(request).await?;
@@ -238,14 +247,20 @@ impl GrpcAdapter {
     /// Parse service and methods from file descriptor
     fn parse_service_info(&self, descriptor: &FileDescriptorProto) -> Result<ServiceInfo> {
         let mut methods = HashMap::new();
+        let package = descriptor.package.clone().unwrap_or_default();
 
         for service in &descriptor.service {
             let service_name = service.name.clone().unwrap_or_default();
+            let full_service_name = if package.is_empty() {
+                service_name
+            } else {
+                format!("{}.{}", package, service_name)
+            };
             for method in &service.method {
                 let method_name = method.name.clone().unwrap_or_default();
                 let method_info = MethodInfo {
                     name: method_name.clone(),
-                    service_name: service_name.clone(),
+                    service_name: full_service_name.clone(),
                     input_type: method.input_type.clone().unwrap_or_default(),
                     output_type: method.output_type.clone().unwrap_or_default(),
                     is_server_streaming: method.server_streaming.unwrap_or(false),
@@ -364,31 +379,105 @@ impl GrpcAdapter {
         method_info: &MethodInfo,
         args: HashMap<String, Value>,
     ) -> Result<Value> {
-        let _endpoint = self.create_endpoint(url)?;
-        let _channel = _endpoint.connect().await?;
+        if method_info.is_server_streaming || method_info.is_client_streaming {
+            bail!(
+                "Unsupported gRPC call type for '{}': only unary methods are supported",
+                format!("{}/{}", method_info.service_name, method_info.name)
+            );
+        }
 
-        // Build the request message from args
+        let target = Self::parse_url(url)?;
+        let full_method = format!("{}/{}", method_info.service_name, method_info.name);
         let request_data = self.build_request_message(&args)?;
 
-        // For now, we'll use a simplified approach with JSON decoding
-        // In a full implementation, you'd use prost to build the actual message
-        // and call the method via tonic's dynamic invoker
+        self.invoke_unary_with_grpcurl(url, &target, &full_method, &request_data)
+            .await
+    }
 
-        // Since tonic doesn't have a built-in dynamic invoker, we need to use
-        // a different approach. We'll serialize the args and return them as-is
-        // for now, with proper streaming support indicated in metadata
+    async fn invoke_unary_with_grpcurl(
+        &self,
+        original_url: &str,
+        target: &str,
+        full_method: &str,
+        request_data: &Value,
+    ) -> Result<Value> {
+        let request_json = serde_json::to_string(request_data)?;
+        let attempts = Self::grpcurl_attempts(original_url, target);
+        let mut last_error = String::new();
 
-        Ok(serde_json::json!({
-            "method": method_info.name,
-            "service": method_info.service_name,
-            "request": request_data,
-            "is_server_streaming": method_info.is_server_streaming,
-            "is_client_streaming": method_info.is_client_streaming,
-            "note": "Dynamic gRPC invocation requires prost-generated types. This is a placeholder response showing the method signature and streaming info.",
-            "full_method": format!("{}/{}", method_info.service_name, method_info.name),
-            "input_type": method_info.input_type,
-            "output_type": method_info.output_type,
-        }))
+        for plaintext in attempts {
+            let mut cmd = tokio::process::Command::new("grpcurl");
+            cmd.arg("-format").arg("json");
+
+            if plaintext {
+                cmd.arg("-plaintext");
+            }
+
+            if let Some(profile) = &self.auth_profile {
+                for header in profile.to_grpcurl_headers()? {
+                    cmd.arg("-H").arg(header);
+                }
+            }
+
+            cmd.arg("-d").arg(&request_json).arg(target).arg(full_method);
+
+            let output = cmd.output().await.map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::anyhow!(
+                        "grpcurl is required for gRPC unary calls. Install grpcurl and retry."
+                    )
+                } else {
+                    anyhow::anyhow!("Failed to execute grpcurl: {}", e)
+                }
+            })?;
+
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if stdout.is_empty() {
+                    return Ok(serde_json::json!({}));
+                }
+
+                return serde_json::from_str(&stdout).or_else(|_| {
+                    Ok(serde_json::json!({
+                        "raw": stdout
+                    }))
+                });
+            }
+
+            last_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if last_error.is_empty() {
+                last_error = "grpcurl failed without stderr output".to_string();
+            }
+        }
+
+        bail!("gRPC unary invocation failed: {}", last_error)
+    }
+
+    fn grpcurl_attempts(original_url: &str, target: &str) -> Vec<bool> {
+        let mut attempts = Vec::new();
+
+        if original_url.starts_with("http://") {
+            attempts.push(true);
+        } else if original_url.starts_with("https://") {
+            attempts.push(false);
+        } else if target.ends_with(":9000")
+            || target.ends_with(":50051")
+            || target.ends_with(":50052")
+            || target.ends_with(":50053")
+            || target.ends_with(":9090")
+        {
+            attempts.push(true);
+            attempts.push(false);
+        } else if target.ends_with(":443") || target.ends_with(":9001") {
+            attempts.push(false);
+            attempts.push(true);
+        } else {
+            attempts.push(false);
+            attempts.push(true);
+        }
+
+        attempts.dedup();
+        attempts
     }
 
     /// Build request message from args
@@ -436,40 +525,12 @@ impl Adapter for GrpcAdapter {
     }
 
     async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Parse URL to get host and port
-        let addr = Self::parse_url(url)?;
-
-        // Try standard gRPC ports first
-        if let Some(port_str) = addr.split(':').next_back() {
-            if let Ok(port) = port_str.parse::<u16>() {
-                // Common gRPC ports
-                if port == 50051 || port == 50052 || port == 50053 || port == 9090 {
-                    // Try to check if reflection is available
-                    match self.create_endpoint(url) {
-                        Ok(endpoint) => {
-                            if Self::has_reflection(&endpoint).await.unwrap_or(false) {
-                                return Ok(true);
-                            }
-                            // If reflection check fails but it's a gRPC port, assume it's gRPC
-                            return Ok(true);
-                        }
-                        Err(_) => return Ok(false),
-                    }
-                }
-            }
-        }
-
-        // Try to detect gRPC via reflection
-        match self.create_endpoint(url) {
-            Ok(endpoint) => {
-                if Self::has_reflection(&endpoint).await.unwrap_or(false) {
-                    return Ok(true);
-                }
-            }
+        let endpoint = match self.create_endpoint(url) {
+            Ok(endpoint) => endpoint,
             Err(_) => return Ok(false),
-        }
+        };
 
-        Ok(false)
+        Ok(Self::has_reflection(&endpoint).await.unwrap_or(false))
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
@@ -608,6 +669,7 @@ impl Adapter for GrpcAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_parse_url() {
@@ -623,5 +685,75 @@ mod tests {
             GrpcAdapter::parse_url("localhost").unwrap(),
             "localhost:50051"
         );
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_for_common_targets() {
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("grpcb.in:9000", "grpcb.in:9000"),
+            vec![true, false]
+        );
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("https://grpcb.in:9001", "grpcb.in:9001"),
+            vec![false]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_can_handle_rejects_non_grpc_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body("ok")
+            .create_async()
+            .await;
+
+        let adapter = GrpcAdapter::new();
+        let can_handle = adapter.can_handle(&server.url()).await.unwrap();
+        assert!(!can_handle);
+    }
+
+    #[tokio::test]
+    async fn test_call_method_rejects_streaming_methods() {
+        let adapter = GrpcAdapter::new();
+        let method = MethodInfo {
+            name: "Stream".to_string(),
+            service_name: "example.StreamService".to_string(),
+            input_type: "example.Request".to_string(),
+            output_type: "example.Response".to_string(),
+            is_server_streaming: true,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("only unary methods are supported"));
+    }
+}
+
+trait GrpcurlAuthHeaders {
+    fn to_grpcurl_headers(&self) -> Result<Vec<String>>;
+}
+
+impl GrpcurlAuthHeaders for Profile {
+    fn to_grpcurl_headers(&self) -> Result<Vec<String>> {
+        use base64::Engine;
+
+        let header = match self.auth_type {
+            crate::auth::AuthType::Bearer => format!("authorization: Bearer {}", self.api_key),
+            crate::auth::AuthType::ApiKey => format!("x-api-key: {}", self.api_key),
+            crate::auth::AuthType::Basic => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&self.api_key);
+                format!("authorization: Basic {}", encoded)
+            }
+        };
+
+        Ok(vec![header])
     }
 }
