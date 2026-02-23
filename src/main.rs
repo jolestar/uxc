@@ -5,11 +5,13 @@ use tracing::info;
 mod adapters;
 mod auth;
 mod cache;
+mod error;
 mod output;
 
 use adapters::{Adapter, ProtocolDetector};
 use auth::{AuthType, Profile, Profiles};
 use cache::CacheConfig;
+use error::UxcError;
 use output::OutputEnvelope;
 
 #[derive(Parser)]
@@ -172,10 +174,10 @@ async fn run() -> Result<()> {
 
     // Determine profile name: CLI flag > env var > default
     // Also track whether the profile was explicitly selected (not implicit default)
-    let (profile_name, profile_explicitly_selected) = if cli.profile.is_some() {
-        (cli.profile.unwrap(), true)
-    } else if std::env::var("UXC_PROFILE").is_ok() {
-        (std::env::var("UXC_PROFILE").unwrap(), true)
+    let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli.profile {
+        (profile, true)
+    } else if let Ok(profile) = std::env::var("UXC_PROFILE") {
+        (profile, true)
     } else {
         ("default".to_string(), false)
     };
@@ -207,7 +209,9 @@ async fn run() -> Result<()> {
     }
 
     // All other commands require a URL
-    let url = cli.url.ok_or_else(|| anyhow::anyhow!("URL is required"))?;
+    let url = cli
+        .url
+        .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))?;
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
@@ -286,28 +290,29 @@ async fn run() -> Result<()> {
 }
 
 fn error_code(err: &anyhow::Error) -> &'static str {
-    let message = err.to_string().to_lowercase();
+    for cause in err.chain() {
+        if let Some(uxc_error) = cause.downcast_ref::<UxcError>() {
+            return match uxc_error {
+                UxcError::ProtocolDetectionFailed(_) | UxcError::UnsupportedProtocol(_) => {
+                    "PROTOCOL_DETECTION_FAILED"
+                }
+                UxcError::OperationNotFound(_) => "OPERATION_NOT_FOUND",
+                UxcError::InvalidArguments(_) => "INVALID_ARGUMENT",
+                UxcError::ExecutionFailed(_)
+                | UxcError::SchemaRetrievalFailed(_)
+                | UxcError::NetworkError(_)
+                | UxcError::JsonError(_)
+                | UxcError::IoError(_)
+                | UxcError::GenericError(_) => "EXECUTION_FAILED",
+            };
+        }
 
-    if message.contains("no adapter found")
-        || message.contains("protocol detection failed")
-        || message.contains("unsupported protocol")
-    {
-        "PROTOCOL_DETECTION_FAILED"
-    } else if message.contains("operation not found")
-        || message.contains("method") && message.contains("not found")
-        || message.contains("tool") && message.contains("not found")
-    {
-        "OPERATION_NOT_FOUND"
-    } else if message.contains("invalid")
-        || message.contains("missing")
-        || message.contains("parse")
-    {
-        "INVALID_ARGUMENT"
-    } else if message.contains("unsupported") {
-        "UNSUPPORTED_OPERATION"
-    } else {
-        "EXECUTION_FAILED"
+        if cause.downcast_ref::<serde_json::Error>().is_some() {
+            return "INVALID_ARGUMENT";
+        }
     }
+
+    "EXECUTION_FAILED"
 }
 
 async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
@@ -483,7 +488,8 @@ async fn handle_call(
     // Parse arguments
     let mut args_map = std::collections::HashMap::new();
     if let Some(json_str) = json {
-        let value: serde_json::Value = serde_json::from_str(&json_str)?;
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| UxcError::InvalidArguments(format!("Invalid JSON payload: {}", e)))?;
         if let Some(obj) = value.as_object() {
             for (k, v) in obj {
                 args_map.insert(k.clone(), v.clone());

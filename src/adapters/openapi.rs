@@ -2,6 +2,7 @@
 
 use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
 use crate::auth::Profile;
+use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -53,15 +54,14 @@ impl OpenAPIAdapter {
 
     fn schema_candidates(url: &str) -> Vec<String> {
         let normalized = Self::normalized_url(url);
-        let mut candidates = Vec::new();
-
         if Self::SCHEMA_ENDPOINTS
             .iter()
             .any(|endpoint| normalized.ends_with(endpoint))
         {
-            candidates.push(normalized.clone());
+            return vec![normalized];
         }
 
+        let mut candidates = Vec::new();
         for endpoint in Self::SCHEMA_ENDPOINTS {
             candidates.push(format!("{}{}", normalized, endpoint));
         }
@@ -225,7 +225,7 @@ impl Adapter for OpenAPIAdapter {
         let op = operations
             .iter()
             .find(|o| o.name == operation)
-            .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation))?;
+            .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
         let mut help = format!("## {}\n", op.name);
         if let Some(desc) = &op.description {
@@ -261,7 +261,10 @@ impl Adapter for OpenAPIAdapter {
         // Parse operation (e.g., "GET /users/{id}")
         let parts: Vec<&str> = operation.splitn(2, ' ').collect();
         if parts.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid operation format"));
+            return Err(UxcError::InvalidArguments(
+                "Invalid operation format. Use 'METHOD /path'".to_string(),
+            )
+            .into());
         }
 
         let method = parts[0];
@@ -275,7 +278,13 @@ impl Adapter for OpenAPIAdapter {
             "PUT" => self.client.put(&full_url),
             "DELETE" => self.client.delete(&full_url),
             "PATCH" => self.client.patch(&full_url),
-            _ => return Err(anyhow::anyhow!("Unsupported HTTP method: {}", method)),
+            _ => {
+                return Err(UxcError::InvalidArguments(format!(
+                    "Unsupported HTTP method: {}",
+                    method
+                ))
+                .into())
+            }
         };
 
         // Apply authentication if profile is set
@@ -344,12 +353,6 @@ mod tests {
             .expect(2)
             .create_async()
             .await;
-        let _openapi = server
-            .mock("GET", "/openapi.json")
-            .with_status(404)
-            .expect(0)
-            .create_async()
-            .await;
 
         let adapter = OpenAPIAdapter::new();
         assert!(adapter.can_handle(&server.url()).await.unwrap());
@@ -368,16 +371,16 @@ mod tests {
             .expect(2)
             .create_async()
             .await;
-        let _openapi = server
-            .mock("GET", "/openapi.json")
-            .with_status(404)
-            .expect(0)
-            .create_async()
-            .await;
 
         let adapter = OpenAPIAdapter::new();
         assert!(adapter.can_handle(&server.url()).await.unwrap());
         let schema = adapter.fetch_schema(&server.url()).await.unwrap();
         assert_eq!(schema["openapi"], "3.0.0");
+    }
+
+    #[test]
+    fn schema_candidates_do_not_append_to_schema_url() {
+        let candidates = OpenAPIAdapter::schema_candidates("https://example.com/openapi.json");
+        assert_eq!(candidates, vec!["https://example.com/openapi.json"]);
     }
 }

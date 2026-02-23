@@ -9,6 +9,7 @@
 
 use super::{Adapter, ExecutionResult, Operation, Parameter, ProtocolType};
 use crate::auth::Profile;
+use crate::error::UxcError;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use prost::Message;
@@ -350,25 +351,24 @@ impl GrpcAdapter {
                         return Ok(method_info.clone());
                     }
                 }
-                bail!("Method '{}' not found", operation);
+                return Err(UxcError::OperationNotFound(operation.to_string()).into());
             }
-            _ => bail!(
-                "Invalid operation format: {}. Use ServiceName/MethodName",
-                operation
-            ),
+            _ => {
+                return Err(UxcError::InvalidArguments(format!(
+                    "Invalid operation format: {}. Use ServiceName/MethodName",
+                    operation
+                ))
+                .into())
+            }
         };
 
         let services = self.get_service_info(url).await?;
         let service_info = services
             .get(&service_name)
-            .ok_or_else(|| anyhow!("Service '{}' not found", service_name))?;
+            .ok_or_else(|| UxcError::OperationNotFound(service_name.clone()))?;
 
         let method_info = service_info.methods.get(&method_name).ok_or_else(|| {
-            anyhow!(
-                "Method '{}' not found in service '{}'",
-                method_name,
-                service_name
-            )
+            UxcError::OperationNotFound(format!("{}/{}", service_name, method_name))
         })?;
 
         Ok(method_info.clone())
@@ -383,8 +383,9 @@ impl GrpcAdapter {
     ) -> Result<Value> {
         if method_info.is_server_streaming || method_info.is_client_streaming {
             bail!(
-                "Unsupported gRPC call type for '{}': only unary methods are supported",
-                format!("{}/{}", method_info.service_name, method_info.name)
+                "Unsupported gRPC call type for '{}/{}': only unary methods are supported",
+                method_info.service_name,
+                method_info.name
             );
         }
 
@@ -473,9 +474,6 @@ impl GrpcAdapter {
         {
             attempts.push(true);
             attempts.push(false);
-        } else if target.ends_with(":443") || target.ends_with(":9001") {
-            attempts.push(false);
-            attempts.push(true);
         } else {
             attempts.push(false);
             attempts.push(true);
@@ -671,6 +669,27 @@ impl Adapter for GrpcAdapter {
     }
 }
 
+trait GrpcurlAuthHeaders {
+    fn to_grpcurl_headers(&self) -> Result<Vec<String>>;
+}
+
+impl GrpcurlAuthHeaders for Profile {
+    fn to_grpcurl_headers(&self) -> Result<Vec<String>> {
+        use base64::Engine;
+
+        let header = match self.auth_type {
+            crate::auth::AuthType::Bearer => format!("authorization: Bearer {}", self.api_key),
+            crate::auth::AuthType::ApiKey => format!("x-api-key: {}", self.api_key),
+            crate::auth::AuthType::Basic => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&self.api_key);
+                format!("authorization: Basic {}", encoded)
+            }
+        };
+
+        Ok(vec![header])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,26 +756,5 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("only unary methods are supported"));
-    }
-}
-
-trait GrpcurlAuthHeaders {
-    fn to_grpcurl_headers(&self) -> Result<Vec<String>>;
-}
-
-impl GrpcurlAuthHeaders for Profile {
-    fn to_grpcurl_headers(&self) -> Result<Vec<String>> {
-        use base64::Engine;
-
-        let header = match self.auth_type {
-            crate::auth::AuthType::Bearer => format!("authorization: Bearer {}", self.api_key),
-            crate::auth::AuthType::ApiKey => format!("x-api-key: {}", self.api_key),
-            crate::auth::AuthType::Basic => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&self.api_key);
-                format!("authorization: Basic {}", encoded)
-            }
-        };
-
-        Ok(vec![header])
     }
 }
