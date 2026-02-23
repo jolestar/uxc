@@ -71,6 +71,7 @@ impl<'de> serde::Deserialize<'de> for AuthType {
 }
 
 impl Default for AuthType {
+    #[allow(clippy::derivable_impls)]
     fn default() -> Self {
         Self::Bearer
     }
