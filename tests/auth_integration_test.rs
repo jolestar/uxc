@@ -344,7 +344,7 @@ fn test_profile_name_validation_invalid_characters() {
     let result = profiles.set_profile("test/profile".to_string(), profile.clone());
     assert!(result.is_err());
 
-    let result = profiles.set_profile("test.profile".to_string(), profile.clone());
+    let result = profiles.set_profile("test+profile".to_string(), profile.clone());
     assert!(result.is_err());
 
     let result = profiles.set_profile("test@profile".to_string(), profile.clone());
