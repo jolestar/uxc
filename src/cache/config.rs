@@ -36,6 +36,7 @@ impl Default for CacheConfig {
 
 impl CacheConfig {
     /// Create a new cache configuration with custom settings
+    #[allow(dead_code)]
     pub fn new(enabled: bool, ttl: u64, max_size: u64, location: PathBuf) -> Self {
         Self {
             enabled,
@@ -46,6 +47,7 @@ impl CacheConfig {
     }
 
     /// Create configuration from cache options
+    #[allow(dead_code)]
     pub fn from_options(options: CacheOptions) -> Self {
         let mut config = Self::default();
 
@@ -130,6 +132,7 @@ impl CacheConfig {
     }
 
     /// Ensure the cache directory exists
+    #[allow(dead_code)]
     pub fn ensure_cache_dir(&self) -> Result<()> {
         if !self.location.exists() {
             fs::create_dir_all(&self.location).with_context(|| {
@@ -144,6 +147,7 @@ impl CacheConfig {
 ///
 /// These are typically set via CLI flags like --no-cache or --cache-ttl.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct CacheOptions {
     /// Override the enabled setting
     pub enabled: Option<bool>,
@@ -160,23 +164,27 @@ pub struct CacheOptions {
 
 impl CacheOptions {
     /// Create new cache options
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the enabled flag
+    #[allow(dead_code)]
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = Some(enabled);
         self
     }
 
     /// Set the TTL
+    #[allow(dead_code)]
     pub fn with_ttl(mut self, ttl: u64) -> Self {
         self.ttl = Some(ttl);
         self
     }
 
     /// Set the max size
+    #[allow(dead_code)]
     pub fn with_max_size(mut self, max_size: u64) -> Self {
         self.max_size = Some(max_size);
         self

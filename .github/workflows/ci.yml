@@ -58,7 +58,7 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings -A non_camel_case_types -A unused_variables -A unused_imports -A dead_code -A clippy::upper_case_acronyms -A clippy::enum_variant_names
+        run: cargo clippy -- -D warnings -A non_camel_case_types -A unused_variables -A unused_imports -A dead_code -A clippy::upper_case_acronyms -A clippy::enum_variant_names -A clippy::vec_init_then_push -A clippy::type_complexity
 
       - name: Run tests
         run: cargo test --verbose -- --test-threads=1

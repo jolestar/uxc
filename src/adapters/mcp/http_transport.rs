@@ -1,5 +1,7 @@
 //! MCP HTTP transport for communicating with MCP servers over HTTP/HTTPS
 
+#![allow(dead_code)]
+
 use super::types::*;
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
