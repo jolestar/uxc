@@ -3,7 +3,6 @@
 //! These tests verify that authentication profiles are correctly applied
 //! to HTTP requests for different protocol adapters.
 
-use std::fs;
 use tempfile::TempDir;
 use uxc::auth::{AuthType, Profile, Profiles};
 
