@@ -7,10 +7,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
+use crate::auth::Profile;
 
 pub struct OpenAPIAdapter {
     client: reqwest::Client,
     cache: Option<Arc<dyn crate::cache::Cache>>,
+    auth_profile: Option<Profile>,
 }
 
 impl OpenAPIAdapter {
@@ -18,11 +20,17 @@ impl OpenAPIAdapter {
         Self {
             client: reqwest::Client::new(),
             cache: None,
+            auth_profile: None,
         }
     }
 
     pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
         self.cache = Some(cache);
+        self
+    }
+
+    pub fn with_auth(mut self, profile: Profile) -> Self {
+        self.auth_profile = Some(profile);
         self
     }
 }
@@ -229,6 +237,13 @@ impl Adapter for OpenAPIAdapter {
             "DELETE" => self.client.delete(&full_url),
             "PATCH" => self.client.patch(&full_url),
             _ => return Err(anyhow::anyhow!("Unsupported HTTP method: {}", method)),
+        };
+
+        // Apply authentication if profile is set
+        let req = if let Some(profile) = &self.auth_profile {
+            crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key)
+        } else {
+            req
         };
 
         let resp = req.json(&args).send().await?;

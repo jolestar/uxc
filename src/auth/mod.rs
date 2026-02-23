@@ -296,6 +296,74 @@ impl Profiles {
     }
 }
 
+/// Apply authentication to a reqwest request builder
+///
+/// This function applies the appropriate authentication headers based on the AuthType.
+pub fn apply_auth_to_request(
+    request_builder: reqwest::RequestBuilder,
+    auth_type: &AuthType,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    match auth_type {
+        AuthType::Bearer => request_builder.bearer_auth(api_key),
+        AuthType::ApiKey => request_builder.header("X-API-Key", api_key),
+        AuthType::Basic => {
+            // For basic auth, api_key should be in format "username:password"
+            // Split on first colon only
+            let parts: Vec<&str> = api_key.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                request_builder.basic_auth(parts[0], Some(parts[1]))
+            } else {
+                // If no colon, treat as username with no password
+                request_builder.basic_auth(api_key, Option::<&str>::None)
+            }
+        }
+    }
+}
+
+/// Convert auth profile to tonic metadata map for gRPC
+///
+/// This function creates a metadata map with appropriate authentication headers.
+#[allow(dead_code)]
+pub fn auth_to_metadata(auth_type: &AuthType, api_key: &str) -> tonic::metadata::MetadataMap {
+    use base64::Engine;
+
+    let mut metadata = tonic::metadata::MetadataMap::new();
+
+    match auth_type {
+        AuthType::Bearer => {
+            metadata.insert(
+                "authorization",
+                tonic::metadata::MetadataValue::try_from(&format!("Bearer {}", api_key))
+                    .unwrap_or_else(|_| tonic::metadata::MetadataValue::from_static("")),
+            );
+        }
+        AuthType::ApiKey => {
+            metadata.insert(
+                "x-api-key",
+                tonic::metadata::MetadataValue::try_from(api_key)
+                    .unwrap_or_else(|_| tonic::metadata::MetadataValue::from_static("")),
+            );
+        }
+        AuthType::Basic => {
+            // For basic auth, api_key should be in format "username:password"
+            let parts: Vec<&str> = api_key.splitn(2, ':').collect();
+            let creds = if parts.len() == 2 {
+                base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", parts[0], parts[1]))
+            } else {
+                base64::engine::general_purpose::STANDARD.encode(format!("{}:", api_key))
+            };
+            metadata.insert(
+                "authorization",
+                tonic::metadata::MetadataValue::try_from(&format!("Basic {}", creds))
+                    .unwrap_or_else(|_| tonic::metadata::MetadataValue::from_static("")),
+            );
+        }
+    }
+
+    metadata
+}
+
 /// Get the home directory
 mod dirs {
     use std::path::PathBuf;

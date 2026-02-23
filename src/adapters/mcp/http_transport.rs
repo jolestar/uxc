@@ -8,6 +8,7 @@ use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::auth::Profile;
 
 /// MCP HTTP transport client
 pub struct McpHttpTransport {
@@ -17,11 +18,18 @@ pub struct McpHttpTransport {
     server_url: String,
     /// Request ID counter
     next_id: Arc<Mutex<i64>>,
+    /// Authentication profile
+    auth_profile: Option<Profile>,
 }
 
 impl McpHttpTransport {
     /// Create a new HTTP transport connected to the given URL
     pub fn new(url: String) -> Result<Self> {
+        Self::with_auth(url, None)
+    }
+
+    /// Create a new HTTP transport with authentication
+    pub fn with_auth(url: String, auth_profile: Option<Profile>) -> Result<Self> {
         // Validate URL
         let parsed = url::Url::parse(&url).context("Invalid MCP server URL")?;
 
@@ -42,6 +50,7 @@ impl McpHttpTransport {
             client,
             server_url: url,
             next_id: Arc::new(Mutex::new(1i64)),
+            auth_profile,
         })
     }
 
@@ -69,12 +78,18 @@ impl McpHttpTransport {
             self.server_url
         );
 
-        // Send HTTP POST request
-        let response = self
+        // Build request with authentication if profile is set
+        let mut req = self
             .client
             .post(&self.server_url)
             .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
+            .header("Accept", "application/json");
+
+        if let Some(profile) = &self.auth_profile {
+            req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
+        }
+
+        let response = req
             .json(&request)
             .send()
             .await

@@ -26,6 +26,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tonic::Status;
 use tracing::{debug, info};
+use crate::auth::Profile;
 
 /// gRPC adapter implementation
 pub struct GrpcAdapter {
@@ -33,6 +34,8 @@ pub struct GrpcAdapter {
     in_memory_cache: Arc<RwLock<HashMap<String, CachedReflectionData>>>,
     /// Persistent schema cache
     schema_cache: Option<Arc<dyn crate::cache::Cache>>,
+    /// Authentication profile
+    auth_profile: Option<Profile>,
 }
 
 /// Cached reflection data for a server
@@ -66,11 +69,17 @@ impl GrpcAdapter {
         Self {
             in_memory_cache: Arc::new(RwLock::new(HashMap::new())),
             schema_cache: None,
+            auth_profile: None,
         }
     }
 
     pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
         self.schema_cache = Some(cache);
+        self
+    }
+
+    pub fn with_auth(mut self, profile: Profile) -> Self {
+        self.auth_profile = Some(profile);
         self
     }
 
