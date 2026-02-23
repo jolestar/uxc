@@ -8,6 +8,7 @@ pub mod transport;
 pub mod types;
 
 use super::{Adapter, ExecutionResult, Operation, ProtocolType};
+use crate::auth::Profile;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 pub use client::McpStdioClient;
@@ -15,12 +16,13 @@ pub use http_transport::McpHttpTransport;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
-use crate::auth::Profile;
 
 pub struct McpAdapter {
     cache: Option<Arc<dyn crate::cache::Cache>>,
     auth_profile: Option<Profile>,
+    discovered_http_endpoints: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl McpAdapter {
@@ -28,6 +30,7 @@ impl McpAdapter {
         Self {
             cache: None,
             auth_profile: None,
+            discovered_http_endpoints: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -88,6 +91,51 @@ impl McpAdapter {
         let (cmd, args) = parts.split_first().unwrap();
         Ok((cmd.clone(), args.to_vec()))
     }
+
+    fn normalize_http_url(url: &str) -> String {
+        url.trim_end_matches('/').to_string()
+    }
+
+    fn http_endpoint_candidates(url: &str) -> Vec<String> {
+        let normalized = Self::normalize_http_url(url);
+        let mut candidates = vec![normalized.clone()];
+
+        if let Ok(parsed) = url::Url::parse(&normalized) {
+            let path = parsed.path();
+            if path.is_empty() || path == "/" {
+                candidates.push(format!("{}/mcp", normalized));
+                candidates.push(format!("{}/.well-known/mcp", normalized));
+            }
+        }
+
+        candidates.sort();
+        candidates.dedup();
+        candidates
+    }
+
+    async fn resolve_http_endpoint(&self, url: &str) -> Option<String> {
+        let normalized = Self::normalize_http_url(url);
+        {
+            let cache = self.discovered_http_endpoints.read().await;
+            if let Some(endpoint) = cache.get(&normalized) {
+                return Some(endpoint.clone());
+            }
+        }
+
+        for candidate in Self::http_endpoint_candidates(url) {
+            match McpHttpTransport::probe_initialize(&candidate, self.auth_profile.clone()).await {
+                Ok(true) => {
+                    let mut cache = self.discovered_http_endpoints.write().await;
+                    cache.insert(normalized, candidate.clone());
+                    return Some(candidate);
+                }
+                Ok(false) => {}
+                Err(_) => {}
+            }
+        }
+
+        None
+    }
 }
 
 impl Default for McpAdapter {
@@ -108,13 +156,8 @@ impl Adapter for McpAdapter {
             return Ok(true);
         }
 
-        // For HTTP-based detection, try MCP discovery endpoints
-        // This is kept from the original implementation
-        let base_url = url.trim_end_matches('/');
-
-        // Check if URL looks like an MCP server path (e.g., contains /mcp/)
-        if base_url.contains("/mcp/") || base_url.ends_with("/mcp") {
-            return Ok(true);
+        if Self::is_http_url(url) {
+            return Ok(self.resolve_http_endpoint(url).await.is_some());
         }
 
         Ok(false)
@@ -169,10 +212,11 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP, connect and get server info
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::with_auth(
-                url.to_string(),
-                self.auth_profile.clone()
-            )?;
+            let endpoint = self
+                .resolve_http_endpoint(url)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let init_result = transport.initialize().await?;
 
             let schema = serde_json::json!({
@@ -239,10 +283,11 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::with_auth(
-                url.to_string(),
-                self.auth_profile.clone()
-            )?;
+            let endpoint = self
+                .resolve_http_endpoint(url)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let tools = transport.list_tools().await?;
 
             let operations = tools
@@ -298,10 +343,11 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::with_auth(
-                url.to_string(),
-                self.auth_profile.clone()
-            )?;
+            let endpoint = self
+                .resolve_http_endpoint(url)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let tools = transport.list_tools().await?;
 
             for tool in tools {
@@ -361,10 +407,11 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::with_auth(
-                url.to_string(),
-                self.auth_profile.clone()
-            )?;
+            let endpoint = self
+                .resolve_http_endpoint(url)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
 
             // Build arguments JSON
             let arguments = if args.is_empty() {
@@ -473,4 +520,54 @@ fn convert_tool_content_to_value(content: &[types::ToolContent]) -> Value {
     }
 
     serde_json::json!({ "content": results })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn initialize_response() -> &'static str {
+        r#"{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "mock-mcp",
+      "version": "1.0.0"
+    }
+  }
+}"#
+    }
+
+    #[tokio::test]
+    async fn can_handle_discovers_host_level_http_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let _root = server
+            .mock("POST", "/")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _well_known = server
+            .mock("POST", "/.well-known/mcp")
+            .with_status(404)
+            .create_async()
+            .await;
+        let _mcp = server
+            .mock("POST", "/mcp")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(initialize_response())
+            .create_async()
+            .await;
+
+        let adapter = McpAdapter::new();
+        assert!(adapter.can_handle(&server.url()).await.unwrap());
+
+        let resolved = adapter.resolve_http_endpoint(&server.url()).await.unwrap();
+        assert!(resolved.ends_with("/mcp"));
+    }
 }

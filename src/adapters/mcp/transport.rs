@@ -16,13 +16,16 @@ pub struct McpStdioTransport {
     /// Request ID counter
     next_id: Arc<Mutex<i64>>,
     /// Request sender
-    request_tx: mpsc::UnboundedSender<RequestWithResponse>,
+    request_tx: mpsc::UnboundedSender<OutboundMessage>,
+    /// Pending response channels keyed by request id
+    response_channels:
+        Arc<Mutex<std::collections::HashMap<RequestId, tokio::sync::oneshot::Sender<JsonRpcResponse>>>>,
 }
 
-/// Request with a response channel
-struct RequestWithResponse {
+/// Message queued for the writer task
+struct OutboundMessage {
+    request_id: Option<RequestId>,
     message: String,
-    response_tx: tokio::sync::oneshot::Sender<JsonRpcResponse>,
 }
 
 impl McpStdioTransport {
@@ -55,24 +58,36 @@ impl McpStdioTransport {
         let stdout = child.stdout.take().context("Failed to get stdout handle")?;
 
         // Create channels for sending requests
-        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<RequestWithResponse>();
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel::<OutboundMessage>();
+
+        let next_id = Arc::new(Mutex::new(1i64));
+        let response_channels = Arc::new(Mutex::new(std::collections::HashMap::<
+            RequestId,
+            tokio::sync::oneshot::Sender<JsonRpcResponse>,
+        >::new()));
 
         // Spawn a task to handle writing to stdin
         let mut stdin_writer = stdin;
+        let response_channels_for_writer = response_channels.clone();
         tokio::spawn(async move {
             while let Some(req) = request_rx.recv().await {
                 if let Err(e) = stdin_writer.write_all(req.message.as_bytes()).await {
                     tracing::error!("Failed to write to stdin: {}", e);
-                    let _ = req.response_tx.send(JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: RequestId::Number(0),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32603,
-                            message: format!("Write error: {}", e),
-                            data: None,
-                        }),
-                    });
+                    if let Some(request_id) = req.request_id {
+                        let mut channels = response_channels_for_writer.lock().await;
+                        if let Some(tx) = channels.remove(&request_id) {
+                            let _ = tx.send(JsonRpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                id: request_id,
+                                result: None,
+                                error: Some(JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Write error: {}", e),
+                                    data: None,
+                                }),
+                            });
+                        }
+                    }
                     break;
                 }
                 if let Err(e) = stdin_writer.write_all(b"\n").await {
@@ -87,12 +102,6 @@ impl McpStdioTransport {
         });
 
         // Spawn a task to read responses from stdout
-        let next_id = Arc::new(Mutex::new(1i64));
-        let response_channels = Arc::new(Mutex::new(std::collections::HashMap::<
-            RequestId,
-            tokio::sync::oneshot::Sender<JsonRpcResponse>,
-        >::new()));
-
         let response_channels_clone = response_channels.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
@@ -132,6 +141,7 @@ impl McpStdioTransport {
             _child: child,
             next_id,
             request_tx,
+            response_channels,
         })
     }
 
@@ -162,13 +172,25 @@ impl McpStdioTransport {
         // Create a response channel
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
+        // Register request id -> response channel before sending the request
+        {
+            let mut channels = self.response_channels.lock().await;
+            channels.insert(id.clone(), response_tx);
+        }
+
         // Send the request
-        self.request_tx
-            .send(RequestWithResponse {
+        if self
+            .request_tx
+            .send(OutboundMessage {
+                request_id: Some(id.clone()),
                 message: request_json,
-                response_tx,
             })
-            .map_err(|_| anyhow!("Request channel closed"))?;
+            .is_err()
+        {
+            let mut channels = self.response_channels.lock().await;
+            channels.remove(&id);
+            return Err(anyhow!("Request channel closed"));
+        }
 
         // Wait for the response
         let response = response_rx.await.context("Response channel closed")?;
@@ -195,18 +217,12 @@ impl McpStdioTransport {
         let notification_json = serde_json::to_string(&notification)?;
         tracing::debug!("Sending notification: {}", notification_json);
 
-        // Create a dummy response channel (we won't use it)
-        let (_response_tx, response_rx) = tokio::sync::oneshot::channel();
-
         self.request_tx
-            .send(RequestWithResponse {
+            .send(OutboundMessage {
+                request_id: None,
                 message: notification_json,
-                response_tx: _response_tx,
             })
             .map_err(|_| anyhow!("Request channel closed"))?;
-
-        // Drop the response receiver immediately since we don't expect a response
-        drop(response_rx);
 
         Ok(())
     }
@@ -315,5 +331,24 @@ fn parse_jsonrpc_message(s: &str) -> Result<Option<JsonRpcResponse>> {
     } else {
         // It's a notification, no response expected
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn send_request_routes_response_by_id() {
+        let script = "read line; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}'; sleep 1";
+        let mut transport = McpStdioTransport::connect(
+            "sh",
+            &["-c".to_string(), script.to_string()],
+        )
+        .await
+        .unwrap();
+
+        let response = transport.send_request("ping", None).await.unwrap();
+        assert_eq!(response["ok"], true);
     }
 }
