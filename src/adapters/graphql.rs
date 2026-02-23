@@ -13,10 +13,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
+use crate::auth::Profile;
 
 pub struct GraphQLAdapter {
     client: reqwest::Client,
     cache: Option<Arc<dyn crate::cache::Cache>>,
+    auth_profile: Option<Profile>,
 }
 
 impl GraphQLAdapter {
@@ -24,11 +26,17 @@ impl GraphQLAdapter {
         Self {
             client: reqwest::Client::new(),
             cache: None,
+            auth_profile: None,
         }
     }
 
     pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
         self.cache = Some(cache);
+        self
+    }
+
+    pub fn with_auth(mut self, profile: Profile) -> Self {
+        self.auth_profile = Some(profile);
         self
     }
 
@@ -52,13 +60,17 @@ impl GraphQLAdapter {
             payload["operationName"] = serde_json::json!(op_name);
         }
 
-        let resp = self
+        let mut req = self
             .client
             .post(url)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await?;
+            .header("Content-Type", "application/json");
+
+        // Apply authentication if profile is set
+        if let Some(profile) = &self.auth_profile {
+            req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
+        }
+
+        let resp = req.json(&payload).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -458,15 +470,18 @@ impl Adapter for GraphQLAdapter {
             }
         "#;
 
-        let resp = match self
+        let mut req = self
             .client
             .post(url)
             .timeout(std::time::Duration::from_secs(2))
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({ "query": query }))
-            .send()
-            .await
-        {
+            .header("Content-Type", "application/json");
+
+        // Apply authentication if profile is set
+        if let Some(profile) = &self.auth_profile {
+            req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
+        }
+
+        let resp = match req.json(&serde_json::json!({ "query": query })).send().await {
             Ok(r) => r,
             Err(_) => return Ok(false),
         };
@@ -510,13 +525,17 @@ impl Adapter for GraphQLAdapter {
         // Fetch from remote
         let introspection_query = Self::get_introspection_query();
 
-        let resp = self
+        let mut req = self
             .client
             .post(url)
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({ "query": introspection_query }))
-            .send()
-            .await?;
+            .header("Content-Type", "application/json");
+
+        // Apply authentication if profile is set
+        if let Some(profile) = &self.auth_profile {
+            req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
+        }
+
+        let resp = req.json(&serde_json::json!({ "query": introspection_query })).send().await?;
 
         if !resp.status().is_success() {
             bail!("Failed to fetch GraphQL schema: HTTP {}", resp.status());

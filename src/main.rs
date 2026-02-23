@@ -9,7 +9,7 @@ mod output;
 
 use adapters::{Adapter, ProtocolDetector};
 use auth::{AuthType, Profile, Profiles};
-use cache::{create_default_cache, CacheConfig};
+use cache::CacheConfig;
 use output::OutputEnvelope;
 
 #[derive(Parser)]
@@ -20,6 +20,10 @@ struct Cli {
     /// Remote endpoint URL (not used with 'cache' subcommand)
     #[arg(value_name = "URL", global = true)]
     url: Option<String>,
+
+    /// Authentication profile name (default: "default", overrides UXC_PROFILE env var)
+    #[arg(long, global = true)]
+    profile: Option<String>,
 
     /// Disable cache for this operation
     #[arg(long, global = true)]
@@ -148,6 +152,16 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Determine profile name: CLI flag > env var > default
+    // Also track whether the profile was explicitly selected (not implicit default)
+    let (profile_name, profile_explicitly_selected) = if cli.profile.is_some() {
+        (cli.profile.unwrap(), true)
+    } else if std::env::var("UXC_PROFILE").is_ok() {
+        (std::env::var("UXC_PROFILE").unwrap(), true)
+    } else {
+        ("default".to_string(), false)
+    };
+
     // Create cache configuration for all commands
     let cache_config = if cli.no_cache {
         CacheConfig {
@@ -179,12 +193,48 @@ async fn main() -> Result<()> {
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
+    // Load authentication profile if specified
+    let auth_profile = if !matches!(cli.command, Commands::Auth { .. }) {
+        match Profiles::load_profiles() {
+            Ok(profiles) => {
+                match profiles.get_profile(&profile_name) {
+                    Ok(profile) => Some(profile.clone()),
+                    Err(e) => {
+                        // If profile not found and it's the default "default", just continue without auth
+                        if !profile_explicitly_selected && profile_name == "default" {
+                            info!("No 'default' profile found, continuing without authentication");
+                            None
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // If profiles file doesn't exist or can't be loaded:
+                // - for the implicit default profile, continue without auth
+                // - for an explicitly selected non-default profile, return an error
+                if !profile_explicitly_selected && profile_name == "default" {
+                    info!("Could not load profiles: {}, continuing without authentication", e);
+                    None
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Failed to load profile '{}': {}. Please run 'uxc auth set {} --api-key <key>' to create it.",
+                        profile_name, e, profile_name
+                    ));
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     // Create cache instance with configuration
     let cache = cache::create_cache(cache_config)?;
 
     match cli.command {
         Commands::List { verbose } => {
-            handle_list(&url, verbose, cache).await?;
+            handle_list(&url, verbose, cache, auth_profile).await?;
         }
         Commands::Call {
             operation,
@@ -193,13 +243,13 @@ async fn main() -> Result<()> {
             help,
         } => {
             if help {
-                handle_help(&url, &operation, cache).await?;
+                handle_help(&url, &operation, cache, auth_profile).await?;
             } else {
-                handle_call(&url, &operation, args, json, cache).await?;
+                handle_call(&url, &operation, args, json, cache, auth_profile).await?;
             }
         }
         Commands::Inspect { full } => {
-            handle_inspect(&url, full, cache).await?;
+            handle_inspect(&url, full, cache, auth_profile).await?;
         }
         Commands::Cache { .. } => {
             // Already handled above
@@ -327,12 +377,16 @@ async fn handle_list(
     url: &str,
     verbose: bool,
     cache: std::sync::Arc<dyn cache::Cache>,
+    auth_profile: Option<Profile>,
 ) -> Result<()> {
     let detector = ProtocolDetector::new();
     let mut adapter = detector.detect_adapter(url).await?;
 
     // Inject cache if adapter supports it
     adapter = inject_cache_if_supported(adapter, cache);
+
+    // Inject auth if profile is provided
+    adapter = inject_auth_if_supported(adapter, auth_profile);
 
     if verbose {
         println!("Detected protocol: {:?}\n", adapter.protocol_type());
@@ -369,12 +423,16 @@ async fn handle_call(
     args: Vec<String>,
     json: Option<String>,
     cache: std::sync::Arc<dyn cache::Cache>,
+    auth_profile: Option<Profile>,
 ) -> Result<()> {
     let detector = ProtocolDetector::new();
     let mut adapter = detector.detect_adapter(url).await?;
 
     // Inject cache if adapter supports it
     adapter = inject_cache_if_supported(adapter, cache);
+
+    // Inject auth if profile is provided
+    adapter = inject_auth_if_supported(adapter, auth_profile);
 
     // Parse arguments
     let mut args_map = std::collections::HashMap::new();
@@ -413,12 +471,16 @@ async fn handle_help(
     url: &str,
     operation: &str,
     cache: std::sync::Arc<dyn cache::Cache>,
+    auth_profile: Option<Profile>,
 ) -> Result<()> {
     let detector = ProtocolDetector::new();
     let mut adapter = detector.detect_adapter(url).await?;
 
     // Inject cache if adapter supports it
     adapter = inject_cache_if_supported(adapter, cache);
+
+    // Inject auth if profile is provided
+    adapter = inject_auth_if_supported(adapter, auth_profile);
 
     let help_text = adapter.operation_help(url, operation).await?;
     println!("{}", help_text);
@@ -429,12 +491,16 @@ async fn handle_inspect(
     url: &str,
     full: bool,
     cache: std::sync::Arc<dyn cache::Cache>,
+    auth_profile: Option<Profile>,
 ) -> Result<()> {
     let detector = ProtocolDetector::new();
     let mut adapter = detector.detect_adapter(url).await?;
 
     // Inject cache if adapter supports it
     adapter = inject_cache_if_supported(adapter, cache);
+
+    // Inject auth if profile is provided
+    adapter = inject_auth_if_supported(adapter, auth_profile);
 
     println!("Protocol: {:?}", adapter.protocol_type());
     println!("Endpoint: {}", url);
@@ -457,5 +523,21 @@ fn inject_cache_if_supported(
         adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_cache(cache)),
         adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_cache(cache)),
         adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_cache(cache)),
+    }
+}
+
+/// Inject authentication into adapter if profile is provided
+fn inject_auth_if_supported(
+    adapter: adapters::AdapterEnum,
+    profile: Option<Profile>,
+) -> adapters::AdapterEnum {
+    match profile {
+        Some(profile) => match adapter {
+            adapters::AdapterEnum::OpenAPI(a) => adapters::AdapterEnum::OpenAPI(a.with_auth(profile)),
+            adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_auth(profile)),
+            adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_auth(profile)),
+            adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_auth(profile)),
+        },
+        None => adapter,
     }
 }

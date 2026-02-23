@@ -16,18 +16,28 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
+use crate::auth::Profile;
 
 pub struct McpAdapter {
     cache: Option<Arc<dyn crate::cache::Cache>>,
+    auth_profile: Option<Profile>,
 }
 
 impl McpAdapter {
     pub fn new() -> Self {
-        Self { cache: None }
+        Self {
+            cache: None,
+            auth_profile: None,
+        }
     }
 
     pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
         self.cache = Some(cache);
+        self
+    }
+
+    pub fn with_auth(mut self, profile: Profile) -> Self {
+        self.auth_profile = Some(profile);
         self
     }
 
@@ -159,7 +169,10 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP, connect and get server info
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::new(url.to_string())?;
+            let transport = McpHttpTransport::with_auth(
+                url.to_string(),
+                self.auth_profile.clone()
+            )?;
             let init_result = transport.initialize().await?;
 
             let schema = serde_json::json!({
@@ -226,7 +239,10 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::new(url.to_string())?;
+            let transport = McpHttpTransport::with_auth(
+                url.to_string(),
+                self.auth_profile.clone()
+            )?;
             let tools = transport.list_tools().await?;
 
             let operations = tools
@@ -282,7 +298,10 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::new(url.to_string())?;
+            let transport = McpHttpTransport::with_auth(
+                url.to_string(),
+                self.auth_profile.clone()
+            )?;
             let tools = transport.list_tools().await?;
 
             for tool in tools {
@@ -342,7 +361,10 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let transport = McpHttpTransport::new(url.to_string())?;
+            let transport = McpHttpTransport::with_auth(
+                url.to_string(),
+                self.auth_profile.clone()
+            )?;
 
             // Build arguments JSON
             let arguments = if args.is_empty() {
