@@ -58,10 +58,31 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          graphql_list="$($UXC https://countries.trevorblades.com/ list)"
-          grep -q "query/country" <<<"$graphql_list"
-          $UXC https://countries.trevorblades.com/ call query/country --json '{"code":"US"}' \
-            | jq -e '.ok == true and .protocol == "graphql"'
+          graphql_list=""
+          for attempt in 1 2 3; do
+            if graphql_list="$("$UXC" https://countries.trevorblades.com/ list)" \
+              && grep -q "query/country" <<<"$graphql_list"; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "GraphQL list failed after retries:"
+              echo "$graphql_list"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          for attempt in 1 2 3; do
+            if "$UXC" https://countries.trevorblades.com/ call query/country --json '{"code":"US"}' \
+              | jq -e '.ok == true and .protocol == "graphql"'; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "GraphQL call failed after retries"
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: gRPC smoke
         shell: bash
