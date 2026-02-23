@@ -1,10 +1,4 @@
 fn main() {
-    // Compile gRPC reflection proto
-    tonic_build::configure()
-        .build_server(false)
-        .compile(
-            &["src/adapters/grpc/reflection.proto"],
-            &["src/adapters/grpc"],
-        )
-        .expect("Failed to compile gRPC reflection proto");
+    // Reflection types are provided by tonic_reflection::pb.
+    // Keep an empty build script so no external protoc toolchain is required.
 }

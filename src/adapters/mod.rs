@@ -11,6 +11,7 @@ pub mod grpc;
 pub mod mcp;
 pub mod openapi;
 
+use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -202,7 +203,7 @@ impl ProtocolDetector {
             return Ok(AdapterEnum::GRpc(grpc_adapter));
         }
 
-        Err(anyhow::anyhow!("No adapter found for URL: {}", url))
+        Err(UxcError::ProtocolDetectionFailed(format!("No adapter found for URL: {}", url)).into())
     }
 }
 

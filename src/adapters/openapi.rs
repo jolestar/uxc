@@ -1,26 +1,40 @@
 //! OpenAPI/Swagger adapter
 
 use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use crate::auth::Profile;
+use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
-use crate::auth::Profile;
 
 pub struct OpenAPIAdapter {
     client: reqwest::Client,
     cache: Option<Arc<dyn crate::cache::Cache>>,
     auth_profile: Option<Profile>,
+    discovered_schema_urls: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl OpenAPIAdapter {
+    const SCHEMA_ENDPOINTS: [&'static str; 7] = [
+        "/openapi.json",
+        "/swagger.json",
+        "/api-docs",
+        "/swagger/v1/swagger.json",
+        "/api/docs",
+        "/docs/swagger.json",
+        "/swagger-docs",
+    ];
+
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
             cache: None,
             auth_profile: None,
+            discovered_schema_urls: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -33,35 +47,44 @@ impl OpenAPIAdapter {
         self.auth_profile = Some(profile);
         self
     }
-}
 
-impl Default for OpenAPIAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Adapter for OpenAPIAdapter {
-    fn protocol_type(&self) -> ProtocolType {
-        ProtocolType::OpenAPI
+    fn normalized_url(url: &str) -> String {
+        url.trim_end_matches('/').to_string()
     }
 
-    async fn can_handle(&self, url: &str) -> Result<bool> {
-        // Try common OpenAPI endpoints with timeout
-        let endpoints = [
-            "/openapi.json",
-            "/swagger.json",
-            "/api-docs",
-            "/swagger/v1/swagger.json",
-            "/api/docs",
-            "/docs/swagger.json",
-            "/swagger-docs",
-        ];
+    fn schema_candidates(url: &str) -> Vec<String> {
+        let normalized = Self::normalized_url(url);
+        if Self::SCHEMA_ENDPOINTS
+            .iter()
+            .any(|endpoint| normalized.ends_with(endpoint))
+        {
+            return vec![normalized];
+        }
 
-        for endpoint in endpoints {
-            let full_url = format!("{}{}", url.trim_end_matches('/'), endpoint);
+        let mut candidates = Vec::new();
+        for endpoint in Self::SCHEMA_ENDPOINTS {
+            candidates.push(format!("{}{}", normalized, endpoint));
+        }
 
+        candidates.sort();
+        candidates.dedup();
+        candidates
+    }
+
+    fn is_openapi_document(body: &Value) -> bool {
+        body.get("openapi").is_some() || body.get("swagger").is_some()
+    }
+
+    async fn discover_schema_url(&self, url: &str) -> Result<Option<String>> {
+        let normalized = Self::normalized_url(url);
+        {
+            let cache = self.discovered_schema_urls.read().await;
+            if let Some(discovered) = cache.get(&normalized) {
+                return Ok(Some(discovered.clone()));
+            }
+        }
+
+        for full_url in Self::schema_candidates(&normalized) {
             let resp = match self
                 .client
                 .get(&full_url)
@@ -78,20 +101,33 @@ impl Adapter for OpenAPIAdapter {
                 continue;
             }
 
-            // Validate that the response is actually OpenAPI/Swagger JSON
             if let Ok(body) = resp.json::<Value>().await {
-                // Check for OpenAPI 3.0+
-                if body.get("openapi").is_some() {
-                    return Ok(true);
-                }
-                // Check for Swagger 2.0
-                if body.get("swagger").is_some() {
-                    return Ok(true);
+                if Self::is_openapi_document(&body) {
+                    let mut cache = self.discovered_schema_urls.write().await;
+                    cache.insert(normalized, full_url.clone());
+                    return Ok(Some(full_url));
                 }
             }
         }
 
-        Ok(false)
+        Ok(None)
+    }
+}
+
+impl Default for OpenAPIAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Adapter for OpenAPIAdapter {
+    fn protocol_type(&self) -> ProtocolType {
+        ProtocolType::OpenAPI
+    }
+
+    async fn can_handle(&self, url: &str) -> Result<bool> {
+        Ok(self.discover_schema_url(url).await?.is_some())
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
@@ -112,7 +148,10 @@ impl Adapter for OpenAPIAdapter {
         }
 
         // Fetch from remote
-        let schema_url = format!("{}/openapi.json", url.trim_end_matches('/'));
+        let schema_url = self
+            .discover_schema_url(url)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("OpenAPI schema endpoint not found for {}", url))?;
         let resp = self.client.get(&schema_url).send().await?;
         let schema: Value = resp.json().await?;
 
@@ -186,7 +225,7 @@ impl Adapter for OpenAPIAdapter {
         let op = operations
             .iter()
             .find(|o| o.name == operation)
-            .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation))?;
+            .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
         let mut help = format!("## {}\n", op.name);
         if let Some(desc) = &op.description {
@@ -222,7 +261,10 @@ impl Adapter for OpenAPIAdapter {
         // Parse operation (e.g., "GET /users/{id}")
         let parts: Vec<&str> = operation.splitn(2, ' ').collect();
         if parts.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid operation format"));
+            return Err(UxcError::InvalidArguments(
+                "Invalid operation format. Use 'METHOD /path'".to_string(),
+            )
+            .into());
         }
 
         let method = parts[0];
@@ -236,7 +278,13 @@ impl Adapter for OpenAPIAdapter {
             "PUT" => self.client.put(&full_url),
             "DELETE" => self.client.delete(&full_url),
             "PATCH" => self.client.patch(&full_url),
-            _ => return Err(anyhow::anyhow!("Unsupported HTTP method: {}", method)),
+            _ => {
+                return Err(UxcError::InvalidArguments(format!(
+                    "Unsupported HTTP method: {}",
+                    method
+                ))
+                .into())
+            }
         };
 
         // Apply authentication if profile is set
@@ -256,5 +304,83 @@ impl Adapter for OpenAPIAdapter {
                 operation: operation.to_string(),
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn swagger_doc() -> &'static str {
+        r#"{
+  "swagger": "2.0",
+  "info": { "title": "Test", "version": "1.0.0" },
+  "paths": {}
+}"#
+    }
+
+    fn openapi_doc() -> &'static str {
+        r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "Test", "version": "1.0.0" },
+  "paths": {}
+}"#
+    }
+
+    #[tokio::test]
+    async fn can_handle_discovers_swagger_json() {
+        let mut server = mockito::Server::new_async().await;
+        let _swagger = server
+            .mock("GET", "/swagger.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(swagger_doc())
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        assert!(adapter.can_handle(&server.url()).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn fetch_schema_uses_discovered_swagger_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let _swagger = server
+            .mock("GET", "/swagger.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(swagger_doc())
+            .expect(2)
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        assert!(adapter.can_handle(&server.url()).await.unwrap());
+        let schema = adapter.fetch_schema(&server.url()).await.unwrap();
+        assert_eq!(schema["swagger"], "2.0");
+    }
+
+    #[tokio::test]
+    async fn fetch_schema_supports_api_docs_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let _api_docs = server
+            .mock("GET", "/api-docs")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(openapi_doc())
+            .expect(2)
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        assert!(adapter.can_handle(&server.url()).await.unwrap());
+        let schema = adapter.fetch_schema(&server.url()).await.unwrap();
+        assert_eq!(schema["openapi"], "3.0.0");
+    }
+
+    #[test]
+    fn schema_candidates_do_not_append_to_schema_url() {
+        let candidates = OpenAPIAdapter::schema_candidates("https://example.com/openapi.json");
+        assert_eq!(candidates, vec!["https://example.com/openapi.json"]);
     }
 }

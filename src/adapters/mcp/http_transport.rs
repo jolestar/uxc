@@ -3,12 +3,12 @@
 #![allow(dead_code)]
 
 use super::types::*;
+use crate::auth::Profile;
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::auth::Profile;
 
 /// MCP HTTP transport client
 pub struct McpHttpTransport {
@@ -83,7 +83,7 @@ impl McpHttpTransport {
             .client
             .post(&self.server_url)
             .header("Content-Type", "application/json")
-            .header("Accept", "application/json");
+            .header("Accept", "application/json, text/event-stream");
 
         if let Some(profile) = &self.auth_profile {
             req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
@@ -95,24 +95,24 @@ impl McpHttpTransport {
             .await
             .context("Failed to send HTTP request to MCP server")?;
 
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unable to read response body".to_string());
+
         // Check HTTP status
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unable to read error body".to_string());
-            bail!(
-                "MCP server returned HTTP error: {} - {}",
-                status,
-                error_body
-            );
+        if !status.is_success() {
+            bail!("MCP server returned HTTP error: {} - {}", status, body);
         }
 
-        // Parse response
-        let json_response: JsonRpcResponse = response
-            .json()
-            .await
+        // Parse JSON or streamable HTTP (SSE) response
+        let json_response = Self::parse_jsonrpc_response(content_type.as_deref(), &body)
             .context("Failed to parse MCP server response")?;
 
         // Check for JSON-RPC error
@@ -128,6 +128,85 @@ impl McpHttpTransport {
         json_response
             .result
             .context("MCP server response missing result field")
+    }
+
+    fn parse_jsonrpc_response(content_type: Option<&str>, body: &str) -> Result<JsonRpcResponse> {
+        let content_type = content_type.unwrap_or_default().to_ascii_lowercase();
+
+        if content_type.contains("text/event-stream") {
+            return Self::parse_sse_response(body);
+        }
+
+        serde_json::from_str::<JsonRpcResponse>(body)
+            .or_else(|_| Self::parse_sse_response(body))
+            .context("Response is neither JSON-RPC JSON nor JSON-RPC SSE")
+    }
+
+    fn parse_sse_response(body: &str) -> Result<JsonRpcResponse> {
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if let Some(data) = trimmed.strip_prefix("data:") {
+                let payload = data.trim();
+                if payload.is_empty() || payload == "[DONE]" {
+                    continue;
+                }
+
+                if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(payload) {
+                    return Ok(response);
+                }
+            }
+        }
+
+        bail!("No JSON-RPC payload found in SSE response")
+    }
+
+    /// Lightweight MCP HTTP probe used for endpoint discovery.
+    pub async fn probe_initialize(url: &str, auth_profile: Option<Profile>) -> Result<bool> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .context("Failed to create MCP probe HTTP client")?;
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "uxc-probe",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
+            id: RequestId::Number(1),
+        };
+
+        let mut req = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream");
+
+        if let Some(profile) = &auth_profile {
+            req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
+        }
+
+        let response = match req.json(&request).send().await {
+            Ok(response) => response,
+            Err(_) => return Ok(false),
+        };
+
+        if !response.status().is_success() {
+            return Ok(false);
+        }
+
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let body = response.text().await.unwrap_or_default();
+
+        Ok(Self::parse_jsonrpc_response(content_type.as_deref(), &body).is_ok())
     }
 
     /// Initialize the MCP session
@@ -223,5 +302,23 @@ impl McpHttpTransport {
         let result = self.send_request("prompts/get", Some(params)).await?;
 
         serde_json::from_value(result).context("Failed to parse prompts/get result")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_sse_jsonrpc_response() {
+        let sse = r#"event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"tools":[]}}
+
+"#;
+
+        let response =
+            McpHttpTransport::parse_jsonrpc_response(Some("text/event-stream"), sse).unwrap();
+        assert_eq!(response.jsonrpc, "2.0");
+        assert!(response.result.is_some());
     }
 }

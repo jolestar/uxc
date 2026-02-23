@@ -326,7 +326,10 @@ pub fn apply_auth_to_request(
 /// This function creates a metadata map with appropriate authentication headers.
 /// Returns an error if the auth credentials cannot be encoded as valid gRPC metadata.
 #[allow(dead_code)]
-pub fn auth_to_metadata(auth_type: &AuthType, api_key: &str) -> Result<tonic::metadata::MetadataMap, anyhow::Error> {
+pub fn auth_to_metadata(
+    auth_type: &AuthType,
+    api_key: &str,
+) -> Result<tonic::metadata::MetadataMap, anyhow::Error> {
     use base64::Engine;
 
     let mut metadata = tonic::metadata::MetadataMap::new();
@@ -334,24 +337,32 @@ pub fn auth_to_metadata(auth_type: &AuthType, api_key: &str) -> Result<tonic::me
     match auth_type {
         AuthType::Bearer => {
             let value = tonic::metadata::MetadataValue::try_from(&format!("Bearer {}", api_key))
-                .map_err(|_| anyhow::anyhow!("Invalid Bearer token: contains invalid metadata characters"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("Invalid Bearer token: contains invalid metadata characters")
+                })?;
             metadata.insert("authorization", value);
         }
         AuthType::ApiKey => {
-            let value = tonic::metadata::MetadataValue::try_from(api_key)
-                .map_err(|_| anyhow::anyhow!("Invalid API key: contains invalid metadata characters"))?;
+            let value = tonic::metadata::MetadataValue::try_from(api_key).map_err(|_| {
+                anyhow::anyhow!("Invalid API key: contains invalid metadata characters")
+            })?;
             metadata.insert("x-api-key", value);
         }
         AuthType::Basic => {
             // For basic auth, api_key should be in format "username:password"
             let parts: Vec<&str> = api_key.splitn(2, ':').collect();
             let creds = if parts.len() == 2 {
-                base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", parts[0], parts[1]))
+                base64::engine::general_purpose::STANDARD
+                    .encode(format!("{}:{}", parts[0], parts[1]))
             } else {
                 base64::engine::general_purpose::STANDARD.encode(format!("{}:", api_key))
             };
             let value = tonic::metadata::MetadataValue::try_from(&format!("Basic {}", creds))
-                .map_err(|_| anyhow::anyhow!("Invalid Basic auth credentials: contains invalid metadata characters"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Invalid Basic auth credentials: contains invalid metadata characters"
+                    )
+                })?;
             metadata.insert("authorization", value);
         }
     }

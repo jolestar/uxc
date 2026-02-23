@@ -5,11 +5,13 @@ use tracing::info;
 mod adapters;
 mod auth;
 mod cache;
+mod error;
 mod output;
 
 use adapters::{Adapter, ProtocolDetector};
 use auth::{AuthType, Profile, Profiles};
 use cache::CacheConfig;
+use error::UxcError;
 use output::OutputEnvelope;
 
 #[derive(Parser)]
@@ -60,9 +62,9 @@ enum Commands {
         #[arg(long)]
         json: Option<String>,
 
-        /// Show help for this operation
-        #[arg(long, short = 'h')]
-        help: bool,
+        /// Show remote help for this operation
+        #[arg(long = "op-help")]
+        op_help: bool,
     },
 
     /// Inspect endpoint/schema
@@ -141,23 +143,41 @@ enum AuthCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
+        .with_writer(std::io::stderr)
         .init();
 
+    if let Err(err) = run().await {
+        let code = error_code(&err);
+        let envelope = OutputEnvelope::error(code, &err.to_string());
+
+        match envelope.to_json() {
+            Ok(json) => println!("{}", json),
+            Err(ser_err) => {
+                eprintln!("failed to serialize error output: {}", ser_err);
+                eprintln!("{}", err);
+            }
+        }
+
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Determine profile name: CLI flag > env var > default
     // Also track whether the profile was explicitly selected (not implicit default)
-    let (profile_name, profile_explicitly_selected) = if cli.profile.is_some() {
-        (cli.profile.unwrap(), true)
-    } else if std::env::var("UXC_PROFILE").is_ok() {
-        (std::env::var("UXC_PROFILE").unwrap(), true)
+    let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli.profile {
+        (profile, true)
+    } else if let Ok(profile) = std::env::var("UXC_PROFILE") {
+        (profile, true)
     } else {
         ("default".to_string(), false)
     };
@@ -189,7 +209,9 @@ async fn main() -> Result<()> {
     }
 
     // All other commands require a URL
-    let url = cli.url.ok_or_else(|| anyhow::anyhow!("URL is required"))?;
+    let url = cli
+        .url
+        .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))?;
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
@@ -215,7 +237,10 @@ async fn main() -> Result<()> {
                 // - for the implicit default profile, continue without auth
                 // - for an explicitly selected non-default profile, return an error
                 if !profile_explicitly_selected && profile_name == "default" {
-                    info!("Could not load profiles: {}, continuing without authentication", e);
+                    info!(
+                        "Could not load profiles: {}, continuing without authentication",
+                        e
+                    );
                     None
                 } else {
                     return Err(anyhow::anyhow!(
@@ -240,9 +265,9 @@ async fn main() -> Result<()> {
             operation,
             args,
             json,
-            help,
+            op_help,
         } => {
-            if help {
+            if op_help {
                 handle_help(&url, &operation, cache, auth_profile).await?;
             } else {
                 handle_call(&url, &operation, args, json, cache, auth_profile).await?;
@@ -262,6 +287,32 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn error_code(err: &anyhow::Error) -> &'static str {
+    for cause in err.chain() {
+        if let Some(uxc_error) = cause.downcast_ref::<UxcError>() {
+            return match uxc_error {
+                UxcError::ProtocolDetectionFailed(_) | UxcError::UnsupportedProtocol(_) => {
+                    "PROTOCOL_DETECTION_FAILED"
+                }
+                UxcError::OperationNotFound(_) => "OPERATION_NOT_FOUND",
+                UxcError::InvalidArguments(_) => "INVALID_ARGUMENT",
+                UxcError::ExecutionFailed(_)
+                | UxcError::SchemaRetrievalFailed(_)
+                | UxcError::NetworkError(_)
+                | UxcError::JsonError(_)
+                | UxcError::IoError(_)
+                | UxcError::GenericError(_) => "EXECUTION_FAILED",
+            };
+        }
+
+        if cause.downcast_ref::<serde_json::Error>().is_some() {
+            return "INVALID_ARGUMENT";
+        }
+    }
+
+    "EXECUTION_FAILED"
 }
 
 async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
@@ -437,7 +488,8 @@ async fn handle_call(
     // Parse arguments
     let mut args_map = std::collections::HashMap::new();
     if let Some(json_str) = json {
-        let value: serde_json::Value = serde_json::from_str(&json_str)?;
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| UxcError::InvalidArguments(format!("Invalid JSON payload: {}", e)))?;
         if let Some(obj) = value.as_object() {
             for (k, v) in obj {
                 args_map.insert(k.clone(), v.clone());
@@ -533,8 +585,12 @@ fn inject_auth_if_supported(
 ) -> adapters::AdapterEnum {
     match profile {
         Some(profile) => match adapter {
-            adapters::AdapterEnum::OpenAPI(a) => adapters::AdapterEnum::OpenAPI(a.with_auth(profile)),
-            adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_auth(profile)),
+            adapters::AdapterEnum::OpenAPI(a) => {
+                adapters::AdapterEnum::OpenAPI(a.with_auth(profile))
+            }
+            adapters::AdapterEnum::GraphQL(a) => {
+                adapters::AdapterEnum::GraphQL(a.with_auth(profile))
+            }
             adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_auth(profile)),
             adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_auth(profile)),
         },

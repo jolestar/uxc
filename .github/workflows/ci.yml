@@ -31,20 +31,6 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
-      - name: Install protobuf compiler
-        shell: bash
-        run: |
-          if [[ "$(uname)" == "Linux" ]]; then
-            sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          elif [[ "$(uname)" == "Darwin" ]]; then
-            brew install protobuf
-          elif [[ "$(uname)" == MINGW* ]] || [[ "$(uname)" == MSYS* ]]; then
-            # Windows - install protoc via chocolatey
-            choco install protoc -y
-            # Add to PATH for future steps (using $GITHUB_PATH file directly for bash)
-            echo "C:\\ProgramData\\chocolatey\\lib\\protoc\\tools" >> $GITHUB_PATH
-          fi
-
       - name: Cache dependencies
         uses: actions/cache@v4
         with:
@@ -95,10 +81,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install protobuf compiler
-        run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
       - name: Check formatting
         run: cargo fmt -- --check
 
@@ -128,20 +110,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install protobuf compiler
-        shell: bash
-        run: |
-          if [[ "$(uname)" == "Linux" ]]; then
-            sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          elif [[ "$(uname)" == "Darwin" ]]; then
-            brew install protobuf
-          elif [[ "$(uname)" == MINGW* ]] || [[ "$(uname)" == MSYS* ]]; then
-            # Windows - install protoc via chocolatey
-            choco install protoc -y
-            # Add to PATH for future steps (using $GITHUB_PATH file directly for bash)
-            echo "C:\\ProgramData\\chocolatey\\lib\\protoc\\tools" >> $GITHUB_PATH
-          fi
 
       - name: Build
         run: cargo build --target ${{ matrix.target }} --release

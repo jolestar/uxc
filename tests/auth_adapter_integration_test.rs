@@ -44,13 +44,22 @@ fn test_profile_storage() {
     // Create test profiles
     let mut profiles = Profiles::new();
     profiles
-        .set_profile("default".to_string(), Profile::new("key-default".to_string(), AuthType::Bearer))
+        .set_profile(
+            "default".to_string(),
+            Profile::new("key-default".to_string(), AuthType::Bearer),
+        )
         .expect("Failed to set default profile");
     profiles
-        .set_profile("production".to_string(), Profile::new("key-prod".to_string(), AuthType::Bearer))
+        .set_profile(
+            "production".to_string(),
+            Profile::new("key-prod".to_string(), AuthType::Bearer),
+        )
         .expect("Failed to set production profile");
     profiles
-        .set_profile("staging".to_string(), Profile::new("key-staging".to_string(), AuthType::Bearer))
+        .set_profile(
+            "staging".to_string(),
+            Profile::new("key-staging".to_string(), AuthType::Bearer),
+        )
         .expect("Failed to set staging profile");
 
     profiles.save_profiles().expect("Failed to save profiles");
@@ -127,7 +136,9 @@ fn test_auth_to_metadata_bearer() {
     let metadata = uxc::auth::auth_to_metadata(&AuthType::Bearer, "test-token")
         .expect("Failed to create metadata");
 
-    let auth_value = metadata.get("authorization").expect("Authorization header not found");
+    let auth_value = metadata
+        .get("authorization")
+        .expect("Authorization header not found");
     assert_eq!(auth_value, "Bearer test-token");
 }
 
@@ -136,7 +147,9 @@ fn test_auth_to_metadata_api_key() {
     let metadata = uxc::auth::auth_to_metadata(&AuthType::ApiKey, "test-api-key")
         .expect("Failed to create metadata");
 
-    let api_key_value = metadata.get("x-api-key").expect("x-api-key header not found");
+    let api_key_value = metadata
+        .get("x-api-key")
+        .expect("x-api-key header not found");
     assert_eq!(api_key_value, "test-api-key");
 }
 
@@ -146,7 +159,9 @@ fn test_auth_to_metadata_basic() {
         .expect("Failed to create metadata");
 
     // "user:password" Base64-encoded is "dXNlcjpwYXNzd29yZA=="
-    let auth_value = metadata.get("authorization").expect("Authorization header not found");
+    let auth_value = metadata
+        .get("authorization")
+        .expect("Authorization header not found");
     assert_eq!(auth_value, "Basic dXNlcjpwYXNzd29yZA==");
 }
 

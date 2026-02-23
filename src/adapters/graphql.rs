@@ -7,13 +7,13 @@
 //! - Comprehensive error handling
 
 use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use crate::auth::Profile;
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
-use crate::auth::Profile;
 
 pub struct GraphQLAdapter {
     client: reqwest::Client,
@@ -481,7 +481,11 @@ impl Adapter for GraphQLAdapter {
             req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
         }
 
-        let resp = match req.json(&serde_json::json!({ "query": query })).send().await {
+        let resp = match req
+            .json(&serde_json::json!({ "query": query }))
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(_) => return Ok(false),
         };
@@ -535,7 +539,10 @@ impl Adapter for GraphQLAdapter {
             req = crate::auth::apply_auth_to_request(req, &profile.auth_type, &profile.api_key);
         }
 
-        let resp = req.json(&serde_json::json!({ "query": introspection_query })).send().await?;
+        let resp = req
+            .json(&serde_json::json!({ "query": introspection_query }))
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             bail!("Failed to fetch GraphQL schema: HTTP {}", resp.status());
