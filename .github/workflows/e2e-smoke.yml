@@ -48,33 +48,31 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          openapi_list="$($UXC https://petstore3.swagger.io/api/v3 list)"
-          grep -q "GET /store/inventory" <<<"$openapi_list"
-          $UXC https://petstore3.swagger.io/api/v3 call "GET /store/inventory" \
-            | jq -e '.ok == true and .protocol == "openapi"'
+          $UXC https://petstore3.swagger.io/api/v3 list \
+            | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .name == "GET /store/inventory")'
+          $UXC https://petstore3.swagger.io/api/v3 "GET /store/inventory" \
+            | jq -e '.ok == true and .protocol == "openapi" and .kind == "call_result"'
 
       - name: GraphQL smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          graphql_list=""
           for attempt in 1 2 3; do
-            if graphql_list="$("$UXC" https://countries.trevorblades.com/ list)" \
-              && grep -q "query/country" <<<"$graphql_list"; then
+            if "$UXC" https://countries.trevorblades.com/ list \
+              | jq -e '.ok == true and any(.data.operations[]; .name == "query/country")' >/dev/null; then
               break
             fi
             if [[ "$attempt" -eq 3 ]]; then
-              echo "GraphQL list failed after retries:"
-              echo "$graphql_list"
+              echo "GraphQL list failed after retries"
               exit 1
             fi
             sleep 2
           done
 
           for attempt in 1 2 3; do
-            if "$UXC" https://countries.trevorblades.com/ call query/country --json '{"code":"US"}' \
-              | jq -e '.ok == true and .protocol == "graphql"'; then
+            if "$UXC" https://countries.trevorblades.com/ query/country --json '{"code":"US"}' \
+              | jq -e '.ok == true and .protocol == "graphql" and .kind == "call_result"'; then
               break
             fi
             if [[ "$attempt" -eq 3 ]]; then
@@ -89,19 +87,19 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          grpc_list="$($UXC grpcb.in:9000 list)"
-          grep -q "addsvc.Add/Sum" <<<"$grpc_list"
-          $UXC grpcb.in:9000 call addsvc.Add/Sum --json '{"a":1,"b":2}' \
-            | jq -e '.ok == true and .protocol == "grpc" and .result.v == "3"'
+          $UXC grpcb.in:9000 list \
+            | jq -e '.ok == true and any(.data.operations[]; .name == "addsvc.Add/Sum")'
+          $UXC grpcb.in:9000 addsvc.Add/Sum --json '{"a":1,"b":2}' \
+            | jq -e '.ok == true and .protocol == "grpc" and .data.v == "3"'
 
       - name: MCP HTTP smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          mcp_http_list="$($UXC https://mcp.deepwiki.com/mcp list)"
-          grep -q "read_wiki_structure" <<<"$mcp_http_list"
-          $UXC https://mcp.deepwiki.com/mcp call read_wiki_structure --json '{"repoName":"jolestar/uxc"}' \
+          $UXC https://mcp.deepwiki.com/mcp list \
+            | jq -e '.ok == true and any(.data.operations[]; .name == "read_wiki_structure")'
+          $UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"jolestar/uxc"}' \
             | jq -e '.ok == true and .protocol == "mcp"'
 
       - name: MCP stdio smoke
@@ -110,7 +108,7 @@ jobs:
           set -euo pipefail
           UXC=target/release/uxc
           MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp'
-          mcp_stdio_list="$("$UXC" "$MCP_STDIO" list)"
-          grep -q "list_directory" <<<"$mcp_stdio_list"
-          "$UXC" "$MCP_STDIO" call list_directory --json '{"path":"/tmp"}' \
+          "$UXC" "$MCP_STDIO" list \
+            | jq -e '.ok == true and any(.data.operations[]; .name == "list_directory")'
+          "$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' \
             | jq -e '.ok == true and .protocol == "mcp"'

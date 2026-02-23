@@ -47,7 +47,7 @@ UXC does not require registering server aliases.
 
 ```bash
 uxc https://api.example.com list
-uxc https://api.example.com call "GET /users/42"
+uxc https://api.example.com "GET /users/42"
 ```
 
 Any compliant endpoint can be called directly.
@@ -70,7 +70,7 @@ UXC automatically:
 * Generates contextual help
 * Validates arguments
 * Executes calls
-* Returns structured JSON for `call`
+* Returns structured JSON by default
 
 No manual client definitions required.
 
@@ -92,16 +92,18 @@ The CLI interface remains consistent across protocols.
 
 ### 4. Deterministic Machine Output
 
-`uxc ... call ...` outputs a stable JSON envelope:
+`uxc ...` outputs a stable JSON envelope by default:
 
 ```json
 {
   "ok": true,
+  "kind": "call_result",
   "protocol": "openapi",
   "endpoint": "https://api.example.com",
   "operation": "user.get",
-  "result": { ... },
+  "data": { ... },
   "meta": {
+    "version": "v1",
     "duration_ms": 128
   }
 }
@@ -115,9 +117,14 @@ Command failures are structured and predictable:
   "error": {
     "code": "INVALID_ARGUMENT",
     "message": "Field 'id' must be an integer"
+  },
+  "meta": {
+    "version": "v1"
   }
 }
 ```
+
+Use `--text` (or `--format text`) for human-readable output.
 
 This makes UXC ideal for:
 
@@ -175,13 +182,14 @@ cargo install uxc
 uxc https://api.example.com list
 
 # Get operation help
-uxc https://api.example.com call "GET /users/{id}" --op-help
+uxc https://api.example.com describe "GET /users/{id}"
+uxc https://api.example.com "GET /users/{id}" help
 
 # Execute with parameters
-uxc https://api.example.com call "GET /users/{id}" --json '{"id":42}'
+uxc https://api.example.com "GET /users/{id}" --json '{"id":42}'
 
 # Execute with JSON input
-uxc https://api.example.com call "POST /users" --json '{"name":"Alice","email":"alice@example.com"}'
+uxc https://api.example.com "POST /users" --json '{"name":"Alice","email":"alice@example.com"}'
 ```
 
 ### gRPC Services
@@ -191,7 +199,7 @@ uxc https://api.example.com call "POST /users" --json '{"name":"Alice","email":"
 uxc grpc.example.com:9000 list
 
 # Call a unary RPC
-uxc grpc.example.com:9000 call addsvc.Add/Sum --json '{"a":1,"b":2}'
+uxc grpc.example.com:9000 addsvc.Add/Sum --json '{"a":1,"b":2}'
 ```
 
 Note: gRPC unary invocation uses the `grpcurl` binary at runtime.
@@ -203,13 +211,13 @@ Note: gRPC unary invocation uses the `grpcurl` binary at runtime.
 uxc https://graphql.example.com list
 
 # Execute a query
-uxc https://graphql.example.com call query/viewer
+uxc https://graphql.example.com query/viewer
 
 # Execute with parameters
-uxc https://graphql.example.com call query/user --json '{"id":"42"}'
+uxc https://graphql.example.com query/user --json '{"id":"42"}'
 
 # Execute a mutation
-uxc https://graphql.example.com call mutation/addStar --json '{"starredId":"123"}'
+uxc https://graphql.example.com mutation/addStar --json '{"starredId":"123"}'
 ```
 
 ### MCP (Model Context Protocol)
@@ -217,11 +225,11 @@ uxc https://graphql.example.com call mutation/addStar --json '{"starredId":"123"
 ```bash
 # HTTP transport (recommended for production)
 uxc https://mcp-server.example.com list
-uxc https://mcp-server.example.com call tool_name --json '{"param1":"value1"}'
+uxc https://mcp-server.example.com tool_name --json '{"param1":"value1"}'
 
 # stdio transport (for local development)
 uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list
-uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" call list_directory --json '{"path":"/tmp"}'
+uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list_directory --json '{"path":"/tmp"}'
 ```
 
 ## Public Test Endpoints (No API Key)
