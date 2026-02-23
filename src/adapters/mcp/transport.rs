@@ -18,8 +18,9 @@ pub struct McpStdioTransport {
     /// Request sender
     request_tx: mpsc::UnboundedSender<OutboundMessage>,
     /// Pending response channels keyed by request id
-    response_channels:
-        Arc<Mutex<std::collections::HashMap<RequestId, tokio::sync::oneshot::Sender<JsonRpcResponse>>>>,
+    response_channels: Arc<
+        Mutex<std::collections::HashMap<RequestId, tokio::sync::oneshot::Sender<JsonRpcResponse>>>,
+    >,
 }
 
 /// Message queued for the writer task
@@ -340,13 +341,12 @@ mod tests {
 
     #[tokio::test]
     async fn send_request_routes_response_by_id() {
-        let script = "read line; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}'; sleep 1";
-        let mut transport = McpStdioTransport::connect(
-            "sh",
-            &["-c".to_string(), script.to_string()],
-        )
-        .await
-        .unwrap();
+        let script =
+            "read line; echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}'; sleep 1";
+        let mut transport =
+            McpStdioTransport::connect("sh", &["-c".to_string(), script.to_string()])
+                .await
+                .unwrap();
 
         let response = transport.send_request("ping", None).await.unwrap();
         assert_eq!(response["ok"], true);

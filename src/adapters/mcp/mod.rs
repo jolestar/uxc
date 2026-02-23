@@ -212,10 +212,9 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP, connect and get server info
         if Self::is_http_url(url) {
-            let endpoint = self
-                .resolve_http_endpoint(url)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let endpoint = self.resolve_http_endpoint(url).await.ok_or_else(|| {
+                anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
+            })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let init_result = transport.initialize().await?;
 
@@ -283,10 +282,9 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let endpoint = self
-                .resolve_http_endpoint(url)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let endpoint = self.resolve_http_endpoint(url).await.ok_or_else(|| {
+                anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
+            })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let tools = transport.list_tools().await?;
 
@@ -343,10 +341,9 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let endpoint = self
-                .resolve_http_endpoint(url)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let endpoint = self.resolve_http_endpoint(url).await.ok_or_else(|| {
+                anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
+            })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
             let tools = transport.list_tools().await?;
 
@@ -407,10 +404,9 @@ impl Adapter for McpAdapter {
 
         // For HTTP-based MCP
         if Self::is_http_url(url) {
-            let endpoint = self
-                .resolve_http_endpoint(url)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url))?;
+            let endpoint = self.resolve_http_endpoint(url).await.ok_or_else(|| {
+                anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
+            })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
 
             // Build arguments JSON

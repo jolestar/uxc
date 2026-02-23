@@ -31,7 +31,9 @@ impl Drop for TestEnv {
 /// Helper function to create a test environment with a temporary directory.
 /// Uses a process-wide lock to avoid concurrent HOME mutations across tests.
 fn setup_test_env() -> TestEnv {
-    let guard = home_env_lock().lock().expect("Failed to lock HOME env guard");
+    let guard = home_env_lock()
+        .lock()
+        .expect("Failed to lock HOME env guard");
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let previous_home = std::env::var_os("HOME");
 

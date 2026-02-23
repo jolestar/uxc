@@ -108,17 +108,12 @@ impl McpHttpTransport {
 
         // Check HTTP status
         if !status.is_success() {
-            bail!(
-                "MCP server returned HTTP error: {} - {}",
-                status,
-                body
-            );
+            bail!("MCP server returned HTTP error: {} - {}", status, body);
         }
 
         // Parse JSON or streamable HTTP (SSE) response
-        let json_response =
-            Self::parse_jsonrpc_response(content_type.as_deref(), &body)
-                .context("Failed to parse MCP server response")?;
+        let json_response = Self::parse_jsonrpc_response(content_type.as_deref(), &body)
+            .context("Failed to parse MCP server response")?;
 
         // Check for JSON-RPC error
         if let Some(error) = json_response.error {
@@ -321,8 +316,8 @@ data: {"jsonrpc":"2.0","id":1,"result":{"tools":[]}}
 
 "#;
 
-        let response = McpHttpTransport::parse_jsonrpc_response(Some("text/event-stream"), sse)
-            .unwrap();
+        let response =
+            McpHttpTransport::parse_jsonrpc_response(Some("text/event-stream"), sse).unwrap();
         assert_eq!(response.jsonrpc, "2.0");
         assert!(response.result.is_some());
     }

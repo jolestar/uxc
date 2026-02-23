@@ -8,6 +8,7 @@
 //! - Proper error handling and status code mapping
 
 use super::{Adapter, ExecutionResult, Operation, Parameter, ProtocolType};
+use crate::auth::Profile;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use prost::Message;
@@ -21,7 +22,6 @@ use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tonic::Status;
-use crate::auth::Profile;
 use tonic_reflection::pb as reflection;
 use tracing::{debug, info};
 
@@ -215,9 +215,11 @@ impl GrpcAdapter {
 
         let request = ServerReflectionRequest {
             host: String::new(),
-            message_request: Some(server_reflection_request::MessageRequest::FileContainingSymbol(
-                service_name.to_string(),
-            )),
+            message_request: Some(
+                server_reflection_request::MessageRequest::FileContainingSymbol(
+                    service_name.to_string(),
+                ),
+            ),
         };
 
         tx.send(request).await?;
@@ -419,7 +421,10 @@ impl GrpcAdapter {
                 }
             }
 
-            cmd.arg("-d").arg(&request_json).arg(target).arg(full_method);
+            cmd.arg("-d")
+                .arg(&request_json)
+                .arg(target)
+                .arg(full_method);
 
             let output = cmd.output().await.map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
@@ -731,9 +736,7 @@ mod tests {
             .call_method("localhost:50051", &method, HashMap::new())
             .await
             .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("only unary methods are supported"));
+        assert!(err.to_string().contains("only unary methods are supported"));
     }
 }
 
