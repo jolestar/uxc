@@ -28,8 +28,7 @@ pub const DEFAULT_PROFILES_DIR: &str = ".uxc";
 pub const PROFILES_FILE: &str = "profiles.toml";
 
 /// Authentication type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthType {
     /// Bearer token authentication
     Bearer,
@@ -39,8 +38,39 @@ pub enum AuthType {
     Basic,
 }
 
+impl serde::Serialize for AuthType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = match self {
+            AuthType::Bearer => "bearer",
+            AuthType::ApiKey => "api_key",
+            AuthType::Basic => "basic",
+        };
+        serializer.serialize_str(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AuthType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "bearer" => Ok(AuthType::Bearer),
+            "api_key" => Ok(AuthType::ApiKey),
+            "basic" => Ok(AuthType::Basic),
+            _ => Err(serde::de::Error::custom(format!(
+                "Invalid auth type: {}. Valid values: bearer, api_key, basic",
+                s
+            ))),
+        }
+    }
+}
+
 impl Default for AuthType {
-    #[allow(clippy::derivable_impls)] // Manual impl needed for serde compatibility with #[serde(rename_all)]
     fn default() -> Self {
         Self::Bearer
     }
