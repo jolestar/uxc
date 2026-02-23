@@ -91,21 +91,32 @@ fn test_auth_apply_to_request_basic() {
 
 #[test]
 fn test_auth_to_metadata_bearer() {
-    let metadata = uxc::auth::auth_to_metadata(&AuthType::Bearer, "test-token");
+    let metadata = uxc::auth::auth_to_metadata(&AuthType::Bearer, "test-token")
+        .expect("Failed to create metadata");
 
     assert!(metadata.contains_key("authorization"));
 }
 
 #[test]
 fn test_auth_to_metadata_api_key() {
-    let metadata = uxc::auth::auth_to_metadata(&AuthType::ApiKey, "test-api-key");
+    let metadata = uxc::auth::auth_to_metadata(&AuthType::ApiKey, "test-api-key")
+        .expect("Failed to create metadata");
 
     assert!(metadata.contains_key("x-api-key"));
 }
 
 #[test]
 fn test_auth_to_metadata_basic() {
-    let metadata = uxc::auth::auth_to_metadata(&AuthType::Basic, "user:password");
+    let metadata = uxc::auth::auth_to_metadata(&AuthType::Basic, "user:password")
+        .expect("Failed to create metadata");
 
     assert!(metadata.contains_key("authorization"));
+}
+
+#[test]
+fn test_auth_to_metadata_invalid_token() {
+    // Test with invalid metadata characters (e.g., newline)
+    let result = uxc::auth::auth_to_metadata(&AuthType::Bearer, "test\n token");
+
+    assert!(result.is_err());
 }
