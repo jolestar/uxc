@@ -8,11 +8,11 @@
 //! ```toml
 //! [default]
 //! api_key = "sk-..."
-//! type = "bearer"
+//! auth_type = "bearer"
 //!
 //! [production]
 //! api_key = "sk-prod-..."
-//! type = "bearer"
+//! auth_type = "bearer"
 //! ```
 
 use anyhow::{Context, Result};
