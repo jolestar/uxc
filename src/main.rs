@@ -1,5 +1,8 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use tracing::info;
 
 mod adapters;
@@ -8,20 +11,34 @@ mod cache;
 mod error;
 mod output;
 
-use adapters::{Adapter, ProtocolDetector};
+use adapters::{Adapter, Operation, OperationDetail, ProtocolDetector};
 use auth::{AuthType, Profile, Profiles};
 use cache::CacheConfig;
 use error::UxcError;
 use output::OutputEnvelope;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Json,
+    Text,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputMode {
+    Json,
+    Text,
+}
+
 #[derive(Parser)]
 #[command(name = "uxc")]
 #[command(about = "Universal X-Protocol Call", long_about = None)]
 #[command(version = "0.1.0")]
+#[command(disable_help_flag = true)]
+#[command(disable_help_subcommand = true)]
 struct Cli {
-    /// Remote endpoint URL (not used with 'cache' subcommand)
-    #[arg(value_name = "URL", global = true)]
-    url: Option<String>,
+    /// Show help
+    #[arg(short = 'h', long = "help", global = true)]
+    help: bool,
 
     /// Authentication profile name (default: "default", overrides UXC_PROFILE env var)
     #[arg(long, global = true)]
@@ -35,36 +52,43 @@ struct Cli {
     #[arg(long, global = true)]
     cache_ttl: Option<u64>,
 
+    /// Output format (default: json)
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json, global = true)]
+    format: OutputFormat,
+
+    /// Use human-readable text output
+    #[arg(long, global = true)]
+    text: bool,
+
+    /// Remote endpoint URL (not used with 'cache'/'auth' subcommands)
+    #[arg(value_name = "URL", global = true)]
+    url: Option<String>,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// List available operations
     List {
-        /// Show detailed information
+        /// Show detailed information (text mode only)
         #[arg(short, long)]
         verbose: bool,
     },
 
-    /// Execute an operation
-    Call {
-        /// Operation name (e.g., "user.get")
+    /// Describe one operation in detail
+    Describe {
+        /// Operation name (e.g., "GET /users/{id}", "query/user", "ask_question")
         #[arg(value_name = "OPERATION")]
         operation: String,
+    },
 
-        /// Key-value arguments (e.g., "id=42")
-        #[arg(short, long)]
-        args: Vec<String>,
-
-        /// JSON input payload
-        #[arg(long)]
-        json: Option<String>,
-
-        /// Show remote help for this operation
-        #[arg(long = "op-help")]
-        op_help: bool,
+    /// Show endpoint help, or operation help when OPERATION is provided
+    Help {
+        /// Optional operation name
+        #[arg(value_name = "OPERATION")]
+        operation: Option<String>,
     },
 
     /// Inspect endpoint/schema
@@ -85,6 +109,10 @@ enum Commands {
         #[command(subcommand)]
         auth_command: AuthCommands,
     },
+
+    /// Dynamic operation execution: `uxc <url> <operation> [--json ...] [--args k=v]`
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 #[derive(Subcommand)]
@@ -142,9 +170,35 @@ enum AuthCommands {
     },
 }
 
+enum EndpointCommand {
+    HostHelp,
+    List {
+        verbose: bool,
+    },
+    Describe {
+        operation: String,
+    },
+    Inspect {
+        full: bool,
+    },
+    Execute {
+        operation: String,
+        args: Vec<String>,
+        json: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct OperationSummary {
+    name: String,
+    summary: Option<String>,
+    required: Vec<String>,
+    input_shape_hint: String,
+    protocol_kind: String,
+}
+
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -154,35 +208,36 @@ async fn main() {
         .init();
 
     if let Err(err) = run().await {
-        let code = error_code(&err);
-        let envelope = OutputEnvelope::error(code, &err.to_string());
-
-        match envelope.to_json() {
-            Ok(json) => println!("{}", json),
-            Err(ser_err) => {
-                eprintln!("failed to serialize error output: {}", ser_err);
-                eprintln!("{}", err);
+        if prefers_text_output() {
+            eprintln!("{}", err);
+        } else {
+            let code = error_code(&err);
+            let envelope = OutputEnvelope::error(code, &err.to_string());
+            match envelope.to_json() {
+                Ok(json) => println!("{}", json),
+                Err(ser_err) => {
+                    eprintln!("failed to serialize error output: {}", ser_err);
+                    eprintln!("{}", err);
+                }
             }
         }
-
         std::process::exit(1);
     }
 }
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
-
-    // Determine profile name: CLI flag > env var > default
-    // Also track whether the profile was explicitly selected (not implicit default)
-    let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli.profile {
-        (profile, true)
-    } else if let Ok(profile) = std::env::var("UXC_PROFILE") {
-        (profile, true)
+    let output_mode = if cli.text || cli.format == OutputFormat::Text {
+        OutputMode::Text
     } else {
-        ("default".to_string(), false)
+        OutputMode::Json
     };
 
-    // Create cache configuration for all commands
+    if should_show_global_help(&cli) {
+        print_global_help()?;
+        return Ok(());
+    }
+
     let cache_config = if cli.no_cache {
         CacheConfig {
             enabled: false,
@@ -194,99 +249,476 @@ async fn run() -> Result<()> {
             ..Default::default()
         }
     } else {
-        // Try to load from file, fall back to defaults
         CacheConfig::load_from_file().unwrap_or_default()
     };
 
-    // Handle cache commands first (they don't require a URL)
-    if let Commands::Cache { cache_command } = &cli.command {
+    if let Some(Commands::Cache { cache_command }) = &cli.command {
         return handle_cache_command(cache_command, cache_config).await;
     }
 
-    // Handle auth commands (they don't require a URL)
-    if let Commands::Auth { auth_command } = &cli.command {
+    if let Some(Commands::Auth { auth_command }) = &cli.command {
         return handle_auth_command(auth_command).await;
     }
 
-    // All other commands require a URL
     let url = cli
         .url
+        .clone()
         .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))?;
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
-    // Load authentication profile if specified
-    let auth_profile = if !matches!(cli.command, Commands::Auth { .. }) {
-        match Profiles::load_profiles() {
-            Ok(profiles) => {
-                match profiles.get_profile(&profile_name) {
-                    Ok(profile) => Some(profile.clone()),
-                    Err(e) => {
-                        // If profile not found and it's the default "default", just continue without auth
-                        if !profile_explicitly_selected && profile_name == "default" {
-                            info!("No 'default' profile found, continuing without authentication");
-                            None
-                        } else {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                // If profiles file doesn't exist or can't be loaded:
-                // - for the implicit default profile, continue without auth
-                // - for an explicitly selected non-default profile, return an error
-                if !profile_explicitly_selected && profile_name == "default" {
-                    info!(
-                        "Could not load profiles: {}, continuing without authentication",
-                        e
-                    );
-                    None
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Failed to load profile '{}': {}. Please run 'uxc auth set {} --api-key <key>' to create it.",
-                        profile_name, e, profile_name
-                    ));
-                }
-            }
-        }
-    } else {
-        None
-    };
-
-    // Create cache instance with configuration
+    let endpoint_command = resolve_endpoint_command(&cli)?;
+    let auth_profile = load_auth_profile(cli.profile, &endpoint_command)?;
     let cache = cache::create_cache(cache_config)?;
 
-    match cli.command {
-        Commands::List { verbose } => {
-            handle_list(&url, verbose, cache, auth_profile).await?;
+    let detector = ProtocolDetector::new();
+    let mut adapter = detector.detect_adapter(&url).await?;
+    adapter = inject_cache_if_supported(adapter, cache);
+    adapter = inject_auth_if_supported(adapter, auth_profile);
+
+    match endpoint_command {
+        EndpointCommand::HostHelp => {
+            let start = std::time::Instant::now();
+            let operations = adapter.list_operations(&url).await?;
+            let protocol = adapter.protocol_type().as_str();
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            if output_mode == OutputMode::Json {
+                let summaries = operations
+                    .iter()
+                    .map(|op| to_operation_summary(protocol, op))
+                    .collect::<Vec<_>>();
+                let data = json!({
+                    "operations": summaries,
+                    "count": summaries.len(),
+                    "next": [
+                        "uxc <host> list",
+                        "uxc <host> describe <operation>",
+                        "uxc <host> <operation> --json '{...}'"
+                    ]
+                });
+                print_json(OutputEnvelope::success(
+                    "host_help",
+                    protocol,
+                    &url,
+                    None,
+                    data,
+                    Some(duration_ms),
+                ))?;
+            } else {
+                print_host_help_text(protocol, &url, &operations);
+            }
         }
-        Commands::Call {
+        EndpointCommand::List { verbose } => {
+            let start = std::time::Instant::now();
+            let operations = adapter.list_operations(&url).await?;
+            let protocol = adapter.protocol_type().as_str();
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            if output_mode == OutputMode::Json {
+                let summaries = operations
+                    .iter()
+                    .map(|op| to_operation_summary(protocol, op))
+                    .collect::<Vec<_>>();
+                let data = json!({"operations": summaries, "count": summaries.len()});
+                print_json(OutputEnvelope::success(
+                    "operation_list",
+                    protocol,
+                    &url,
+                    None,
+                    data,
+                    Some(duration_ms),
+                ))?;
+            } else {
+                print_list_text(protocol, &operations, verbose);
+            }
+        }
+        EndpointCommand::Describe { operation } => {
+            let start = std::time::Instant::now();
+            let detail = adapter.describe_operation(&url, &operation).await?;
+            let protocol = adapter.protocol_type().as_str();
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            if output_mode == OutputMode::Json {
+                let data = serde_json::to_value(&detail)?;
+                print_json(OutputEnvelope::success(
+                    "operation_detail",
+                    protocol,
+                    &url,
+                    Some(&operation),
+                    data,
+                    Some(duration_ms),
+                ))?;
+            } else {
+                print_detail_text(protocol, &url, &detail);
+            }
+        }
+        EndpointCommand::Inspect { full } => {
+            let start = std::time::Instant::now();
+            let protocol = adapter.protocol_type().as_str();
+            let schema = if full {
+                Some(adapter.fetch_schema(&url).await?)
+            } else {
+                None
+            };
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            if output_mode == OutputMode::Json {
+                let data = json!({
+                    "protocol": protocol,
+                    "endpoint": url,
+                    "schema": schema,
+                });
+                print_json(OutputEnvelope::success(
+                    "inspect_result",
+                    protocol,
+                    &url,
+                    None,
+                    data,
+                    Some(duration_ms),
+                ))?;
+            } else {
+                println!("Protocol: {}", protocol);
+                println!("Endpoint: {}", url);
+                if let Some(schema) = schema {
+                    println!("\nSchema:\n{}", serde_json::to_string_pretty(&schema)?);
+                }
+            }
+        }
+        EndpointCommand::Execute {
             operation,
             args,
             json,
-            op_help,
         } => {
-            if op_help {
-                handle_help(&url, &operation, cache, auth_profile).await?;
+            let args_map = parse_arguments(args, json)?;
+            let result = adapter.execute(&url, &operation, args_map).await?;
+            let protocol = adapter.protocol_type().as_str();
+
+            if output_mode == OutputMode::Json {
+                print_json(OutputEnvelope::success(
+                    "call_result",
+                    protocol,
+                    &url,
+                    Some(&operation),
+                    result.data,
+                    Some(result.metadata.duration_ms),
+                ))?;
             } else {
-                handle_call(&url, &operation, args, json, cache, auth_profile).await?;
+                println!("{}", serde_json::to_string_pretty(&result.data)?);
             }
-        }
-        Commands::Inspect { full } => {
-            handle_inspect(&url, full, cache, auth_profile).await?;
-        }
-        Commands::Cache { .. } => {
-            // Already handled above
-            unreachable!();
-        }
-        Commands::Auth { .. } => {
-            // Already handled above
-            unreachable!();
         }
     }
 
     Ok(())
+}
+
+fn should_show_global_help(cli: &Cli) -> bool {
+    if cli.help && cli.url.is_none() && cli.command.is_none() {
+        return true;
+    }
+
+    matches!(cli.command, Some(Commands::Help { operation: None })) && cli.url.is_none()
+}
+
+fn print_global_help() -> Result<()> {
+    let mut cmd = Cli::command();
+    cmd.print_help()?;
+    println!();
+    Ok(())
+}
+
+fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
+    match &cli.command {
+        None => Ok(EndpointCommand::HostHelp),
+        Some(Commands::List { verbose }) => Ok(EndpointCommand::List { verbose: *verbose }),
+        Some(Commands::Describe { operation }) => Ok(EndpointCommand::Describe {
+            operation: operation.clone(),
+        }),
+        Some(Commands::Help {
+            operation: Some(operation),
+        }) => Ok(EndpointCommand::Describe {
+            operation: operation.clone(),
+        }),
+        Some(Commands::Help { operation: None }) => Ok(EndpointCommand::HostHelp),
+        Some(Commands::Inspect { full }) => Ok(EndpointCommand::Inspect { full: *full }),
+        Some(Commands::External(tokens)) => parse_external_command(tokens, cli.help),
+        Some(Commands::Cache { .. }) | Some(Commands::Auth { .. }) => Err(
+            UxcError::InvalidArguments("Internal routing error for cache/auth command".to_string())
+                .into(),
+        ),
+    }
+}
+
+fn parse_external_command(tokens: &[String], global_help: bool) -> Result<EndpointCommand> {
+    if tokens.is_empty() {
+        return Err(UxcError::InvalidArguments("Operation is required".to_string()).into());
+    }
+
+    let operation = tokens[0].clone();
+
+    if global_help {
+        return Ok(EndpointCommand::Describe { operation });
+    }
+
+    if tokens.len() >= 2 && tokens[1] == "help" {
+        if tokens.len() > 2 {
+            return Err(UxcError::InvalidArguments(
+                "Unexpected arguments after '<operation> help'".to_string(),
+            )
+            .into());
+        }
+        return Ok(EndpointCommand::Describe { operation });
+    }
+
+    let mut args = Vec::new();
+    let mut json_payload = None;
+    let mut idx = 1;
+
+    while idx < tokens.len() {
+        match tokens[idx].as_str() {
+            "-h" | "--help" => {
+                return Ok(EndpointCommand::Describe { operation });
+            }
+            "-a" | "--args" => {
+                idx += 1;
+                let arg = tokens.get(idx).ok_or_else(|| {
+                    UxcError::InvalidArguments("Missing value for --args".to_string())
+                })?;
+                args.push(arg.clone());
+            }
+            "--json" => {
+                idx += 1;
+                let payload = tokens.get(idx).ok_or_else(|| {
+                    UxcError::InvalidArguments("Missing value for --json".to_string())
+                })?;
+                json_payload = Some(payload.clone());
+            }
+            token if token.contains('=') && !token.starts_with('-') => {
+                args.push(token.to_string());
+            }
+            unknown => {
+                return Err(UxcError::InvalidArguments(format!(
+                    "Unknown argument '{}' for operation '{}'. Use --json or --args",
+                    unknown, operation
+                ))
+                .into());
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(EndpointCommand::Execute {
+        operation,
+        args,
+        json: json_payload,
+    })
+}
+
+fn parse_arguments(
+    args: Vec<String>,
+    json_payload: Option<String>,
+) -> Result<HashMap<String, Value>> {
+    let mut args_map = HashMap::new();
+
+    if let Some(json_str) = json_payload {
+        let value: Value = serde_json::from_str(&json_str)
+            .map_err(|e| UxcError::InvalidArguments(format!("Invalid JSON payload: {}", e)))?;
+        if let Some(obj) = value.as_object() {
+            for (k, v) in obj {
+                args_map.insert(k.clone(), v.clone());
+            }
+        } else {
+            return Err(
+                UxcError::InvalidArguments("JSON payload must be an object".to_string()).into(),
+            );
+        }
+    } else {
+        for arg in args {
+            let parts: Vec<&str> = arg.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                args_map.insert(parts[0].to_string(), json!(parts[1]));
+            }
+        }
+    }
+
+    Ok(args_map)
+}
+
+fn load_auth_profile(
+    cli_profile: Option<String>,
+    endpoint_command: &EndpointCommand,
+) -> Result<Option<Profile>> {
+    if matches!(endpoint_command, EndpointCommand::Inspect { .. }) {
+        // Inspect may still need auth, so fallthrough.
+    }
+
+    let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli_profile {
+        (profile, true)
+    } else if let Ok(profile) = std::env::var("UXC_PROFILE") {
+        (profile, true)
+    } else {
+        ("default".to_string(), false)
+    };
+
+    match Profiles::load_profiles() {
+        Ok(profiles) => match profiles.get_profile(&profile_name) {
+            Ok(profile) => Ok(Some(profile.clone())),
+            Err(e) => {
+                if !profile_explicitly_selected && profile_name == "default" {
+                    info!("No 'default' profile found, continuing without authentication");
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        },
+        Err(e) => {
+            if !profile_explicitly_selected && profile_name == "default" {
+                info!(
+                    "Could not load profiles: {}, continuing without authentication",
+                    e
+                );
+                Ok(None)
+            } else {
+                Err(anyhow::anyhow!(
+                    "Failed to load profile '{}': {}. Please run 'uxc auth set {} --api-key <key>' to create it.",
+                    profile_name,
+                    e,
+                    profile_name
+                ))
+            }
+        }
+    }
+}
+
+fn print_json(envelope: OutputEnvelope) -> Result<()> {
+    println!("{}", envelope.to_json()?);
+    Ok(())
+}
+
+fn print_host_help_text(protocol: &str, endpoint: &str, operations: &[Operation]) {
+    println!("Protocol: {}", protocol);
+    println!("Endpoint: {}", endpoint);
+    println!();
+    println!("Available operations:");
+    for op in operations {
+        if let Some(desc) = &op.description {
+            println!("- {}: {}", op.name, desc);
+        } else {
+            println!("- {}", op.name);
+        }
+    }
+    println!();
+    println!("Next steps:");
+    println!("  uxc {} list", endpoint);
+    println!("  uxc {} describe <operation>", endpoint);
+    println!("  uxc {} <operation> --json '{{...}}'", endpoint);
+}
+
+fn print_list_text(protocol: &str, operations: &[Operation], verbose: bool) {
+    if verbose {
+        println!("Detected protocol: {}", protocol);
+        println!();
+    }
+
+    for op in operations {
+        println!("{}", op.name);
+        if verbose {
+            if let Some(desc) = &op.description {
+                println!("  {}", desc);
+            }
+            if !op.parameters.is_empty() {
+                println!("  Parameters:");
+                for param in &op.parameters {
+                    println!(
+                        "    - {} ({}){}",
+                        param.name,
+                        param.param_type,
+                        if param.required { " required" } else { "" }
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn print_detail_text(protocol: &str, endpoint: &str, detail: &OperationDetail) {
+    println!("Protocol: {}", protocol);
+    println!("Endpoint: {}", endpoint);
+    println!("Operation: {}", detail.name);
+
+    if let Some(description) = &detail.description {
+        println!("Description: {}", description);
+    }
+
+    if let Some(return_type) = &detail.return_type {
+        println!("Return Type: {}", return_type);
+    }
+
+    if !detail.parameters.is_empty() {
+        println!("\nParameters:");
+        for param in &detail.parameters {
+            println!(
+                "- {} ({}){}",
+                param.name,
+                param.param_type,
+                if param.required { " required" } else { "" }
+            );
+            if let Some(desc) = &param.description {
+                println!("  {}", desc);
+            }
+        }
+    }
+
+    if let Some(input_schema) = &detail.input_schema {
+        println!(
+            "\nInput Schema:\n{}",
+            serde_json::to_string_pretty(input_schema).unwrap_or_else(|_| "{}".to_string())
+        );
+    }
+}
+
+fn to_operation_summary(protocol: &str, op: &Operation) -> OperationSummary {
+    let required = op
+        .parameters
+        .iter()
+        .filter(|p| p.required)
+        .map(|p| p.name.clone())
+        .collect::<Vec<_>>();
+
+    let protocol_kind = match protocol {
+        "mcp" => "tool",
+        "graphql" => {
+            if op.name.starts_with("query/") {
+                "query"
+            } else if op.name.starts_with("mutation/") {
+                "mutation"
+            } else if op.name.starts_with("subscription/") {
+                "subscription"
+            } else {
+                "field"
+            }
+        }
+        "grpc" => "rpc",
+        "openapi" => "http_operation",
+        _ => "operation",
+    }
+    .to_string();
+
+    let input_shape_hint = if op.parameters.is_empty() {
+        "none".to_string()
+    } else {
+        "object".to_string()
+    };
+
+    OperationSummary {
+        name: op.name.clone(),
+        summary: op.description.clone(),
+        required,
+        input_shape_hint,
+        protocol_kind,
+    }
 }
 
 fn error_code(err: &anyhow::Error) -> &'static str {
@@ -315,6 +747,27 @@ fn error_code(err: &anyhow::Error) -> &'static str {
     "EXECUTION_FAILED"
 }
 
+fn prefers_text_output() -> bool {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--text") {
+        return true;
+    }
+
+    for (idx, arg) in args.iter().enumerate() {
+        if arg == "--format" {
+            if let Some(value) = args.get(idx + 1) {
+                if value == "text" {
+                    return true;
+                }
+            }
+        } else if arg == "--format=text" {
+            return true;
+        }
+    }
+
+    false
+}
+
 async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
     let cache = cache::create_cache(cache_config)?;
 
@@ -331,7 +784,6 @@ async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig
                 cache.invalidate(url)?;
                 println!("Cache entry cleared for: {}", url);
             } else {
-                // If no URL specified and --all not set, show usage
                 println!("Usage: uxc cache clear <url> OR uxc cache clear --all");
             }
         }
@@ -386,7 +838,6 @@ async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
                 .parse::<AuthType>()
                 .map_err(|e| anyhow::anyhow!("Invalid auth type: {}", e))?;
 
-            // Clone api_key for display before moving it
             let api_key_display = api_key.clone();
             let auth_type_display = auth_type.clone();
 
@@ -424,148 +875,6 @@ async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
     Ok(())
 }
 
-async fn handle_list(
-    url: &str,
-    verbose: bool,
-    cache: std::sync::Arc<dyn cache::Cache>,
-    auth_profile: Option<Profile>,
-) -> Result<()> {
-    let detector = ProtocolDetector::new();
-    let mut adapter = detector.detect_adapter(url).await?;
-
-    // Inject cache if adapter supports it
-    adapter = inject_cache_if_supported(adapter, cache);
-
-    // Inject auth if profile is provided
-    adapter = inject_auth_if_supported(adapter, auth_profile);
-
-    if verbose {
-        println!("Detected protocol: {:?}\n", adapter.protocol_type());
-    }
-
-    let operations = adapter.list_operations(url).await?;
-
-    for op in operations {
-        println!("{}", op.name);
-        if verbose {
-            if let Some(desc) = &op.description {
-                println!("  {}", desc);
-            }
-            if !op.parameters.is_empty() {
-                println!("  Parameters:");
-                for param in &op.parameters {
-                    println!(
-                        "    - {} ({}){}",
-                        param.name,
-                        param.param_type,
-                        if param.required { " required" } else { "" }
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_call(
-    url: &str,
-    operation: &str,
-    args: Vec<String>,
-    json: Option<String>,
-    cache: std::sync::Arc<dyn cache::Cache>,
-    auth_profile: Option<Profile>,
-) -> Result<()> {
-    let detector = ProtocolDetector::new();
-    let mut adapter = detector.detect_adapter(url).await?;
-
-    // Inject cache if adapter supports it
-    adapter = inject_cache_if_supported(adapter, cache);
-
-    // Inject auth if profile is provided
-    adapter = inject_auth_if_supported(adapter, auth_profile);
-
-    // Parse arguments
-    let mut args_map = std::collections::HashMap::new();
-    if let Some(json_str) = json {
-        let value: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| UxcError::InvalidArguments(format!("Invalid JSON payload: {}", e)))?;
-        if let Some(obj) = value.as_object() {
-            for (k, v) in obj {
-                args_map.insert(k.clone(), v.clone());
-            }
-        }
-    } else {
-        for arg in args {
-            let parts: Vec<&str> = arg.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                args_map.insert(parts[0].to_string(), serde_json::json!(parts[1]));
-            }
-        }
-    }
-
-    let result = adapter.execute(url, operation, args_map).await?;
-
-    // Output deterministic JSON envelope
-    let envelope = OutputEnvelope::success(
-        adapter.protocol_type().as_str(),
-        url,
-        operation,
-        result.data,
-        result.metadata.duration_ms,
-    );
-
-    println!("{}", envelope.to_json()?);
-    Ok(())
-}
-
-async fn handle_help(
-    url: &str,
-    operation: &str,
-    cache: std::sync::Arc<dyn cache::Cache>,
-    auth_profile: Option<Profile>,
-) -> Result<()> {
-    let detector = ProtocolDetector::new();
-    let mut adapter = detector.detect_adapter(url).await?;
-
-    // Inject cache if adapter supports it
-    adapter = inject_cache_if_supported(adapter, cache);
-
-    // Inject auth if profile is provided
-    adapter = inject_auth_if_supported(adapter, auth_profile);
-
-    let help_text = adapter.operation_help(url, operation).await?;
-    println!("{}", help_text);
-    Ok(())
-}
-
-async fn handle_inspect(
-    url: &str,
-    full: bool,
-    cache: std::sync::Arc<dyn cache::Cache>,
-    auth_profile: Option<Profile>,
-) -> Result<()> {
-    let detector = ProtocolDetector::new();
-    let mut adapter = detector.detect_adapter(url).await?;
-
-    // Inject cache if adapter supports it
-    adapter = inject_cache_if_supported(adapter, cache);
-
-    // Inject auth if profile is provided
-    adapter = inject_auth_if_supported(adapter, auth_profile);
-
-    println!("Protocol: {:?}", adapter.protocol_type());
-    println!("Endpoint: {}", url);
-
-    if full {
-        let schema = adapter.fetch_schema(url).await?;
-        println!("\nSchema:\n{}", serde_json::to_string_pretty(&schema)?);
-    }
-
-    Ok(())
-}
-
-/// Inject cache into adapter if it supports caching
 fn inject_cache_if_supported(
     adapter: adapters::AdapterEnum,
     cache: std::sync::Arc<dyn cache::Cache>,
@@ -578,7 +887,6 @@ fn inject_cache_if_supported(
     }
 }
 
-/// Inject authentication into adapter if profile is provided
 fn inject_auth_if_supported(
     adapter: adapters::AdapterEnum,
     profile: Option<Profile>,

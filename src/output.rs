@@ -9,6 +9,10 @@ pub struct OutputEnvelope {
     /// Indicates success or failure
     pub ok: bool,
 
+    /// Output kind (operation_list, operation_detail, host_help, call_result, ...)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+
     /// Protocol type (present on success)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protocol: Option<String>,
@@ -17,21 +21,20 @@ pub struct OutputEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 
-    /// Operation name (present on success)
+    /// Operation name (present when applicable)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
 
-    /// Result data (present on success)
+    /// Payload data (present on success)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
+    pub data: Option<Value>,
 
     /// Error information (present on failure)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorInfo>,
 
     /// Metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<Metadata>,
+    pub meta: Metadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,44 +48,56 @@ pub struct ErrorInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {
-    /// Execution duration in milliseconds
-    pub duration_ms: u64,
+    /// Envelope schema version
+    pub version: String,
+
+    /// Execution duration in milliseconds when applicable
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 impl OutputEnvelope {
     /// Create a success response
     pub fn success(
+        kind: &str,
         protocol: &str,
         endpoint: &str,
-        operation: &str,
-        result: Value,
-        duration_ms: u64,
+        operation: Option<&str>,
+        data: Value,
+        duration_ms: Option<u64>,
     ) -> Self {
         Self {
             ok: true,
+            kind: Some(kind.to_string()),
             protocol: Some(protocol.to_string()),
             endpoint: Some(endpoint.to_string()),
-            operation: Some(operation.to_string()),
-            result: Some(result),
+            operation: operation.map(ToString::to_string),
+            data: Some(data),
             error: None,
-            meta: Some(Metadata { duration_ms }),
+            meta: Metadata {
+                version: "v1".to_string(),
+                duration_ms,
+            },
         }
     }
 
     /// Create an error response
-    #[allow(dead_code)]
     pub fn error(code: &str, message: &str) -> Self {
         Self {
             ok: false,
+            kind: None,
             protocol: None,
             endpoint: None,
             operation: None,
-            result: None,
+            data: None,
             error: Some(ErrorInfo {
                 code: code.to_string(),
                 message: message.to_string(),
             }),
-            meta: None,
+            meta: Metadata {
+                version: "v1".to_string(),
+                duration_ms: None,
+            },
         }
     }
 
@@ -99,14 +114,16 @@ mod tests {
     #[test]
     fn test_success_envelope() {
         let envelope = OutputEnvelope::success(
+            "call_result",
             "openapi",
             "https://api.example.com",
-            "GET /users",
+            Some("GET /users"),
             serde_json::json!({"users": []}),
-            128,
+            Some(128),
         );
 
         assert!(envelope.ok);
+        assert_eq!(envelope.kind, Some("call_result".to_string()));
         assert_eq!(envelope.protocol, Some("openapi".to_string()));
         assert_eq!(envelope.operation, Some("GET /users".to_string()));
     }
@@ -116,6 +133,10 @@ mod tests {
         let envelope = OutputEnvelope::error("INVALID_ARGUMENT", "Field 'id' must be an integer");
 
         assert!(!envelope.ok);
-        assert_eq!(envelope.error.unwrap().code, "INVALID_ARGUMENT");
+        assert_eq!(
+            envelope.error.as_ref().map(|e| e.code.clone()),
+            Some("INVALID_ARGUMENT".to_string())
+        );
+        assert_eq!(envelope.meta.version, "v1");
     }
 }

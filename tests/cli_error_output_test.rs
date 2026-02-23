@@ -51,7 +51,6 @@ fn operation_execution_failure_uses_error_envelope() {
 
     let output = uxc_command()
         .arg(server.url())
-        .arg("call")
         .arg("bad-format")
         .output()
         .expect("failed to run uxc");
