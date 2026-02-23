@@ -200,7 +200,10 @@ impl Profiles {
             anyhow::bail!("Profile name cannot be empty");
         }
 
-        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             anyhow::bail!(
                 "Profile name '{}' contains invalid characters. Allowed characters: letters, digits, '_', '-'",
                 name
@@ -208,11 +211,13 @@ impl Profiles {
         }
 
         // Ensure name doesn't start with a digit (TOML table names shouldn't)
-        if name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-            anyhow::bail!(
-                "Profile name '{}' cannot start with a digit",
-                name
-            );
+        if name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            anyhow::bail!("Profile name '{}' cannot start with a digit", name);
         }
 
         Ok(())

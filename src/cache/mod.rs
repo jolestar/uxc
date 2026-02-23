@@ -11,9 +11,9 @@ pub use config::CacheConfig;
 #[allow(unused_imports)]
 pub use config::CacheOptions;
 pub use stats::CacheStats;
+pub use storage::SchemaCache;
 #[allow(unused_imports)]
 pub use storage::{CacheEntry, CacheStorage};
-pub use storage::SchemaCache;
 
 use anyhow::Result;
 use serde_json::Value;
