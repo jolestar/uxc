@@ -15,7 +15,7 @@ pub mod openapi;
 use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -121,7 +121,7 @@ impl ProtocolType {
 }
 
 /// Operation metadata
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
     pub operation_id: String,
     pub display_name: String,
@@ -132,7 +132,7 @@ pub struct Operation {
 }
 
 /// Parameter definition
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameter {
     pub name: String,
     pub param_type: String,
@@ -141,7 +141,7 @@ pub struct Parameter {
 }
 
 /// Rich operation metadata for progressive discovery
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDetail {
     pub operation_id: String,
     pub display_name: String,

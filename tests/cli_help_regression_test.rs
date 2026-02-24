@@ -5,6 +5,18 @@ fn uxc_command() -> Command {
 }
 
 #[test]
+fn bare_invocation_outputs_json_global_help() {
+    let output = uxc_command().output().expect("failed to run uxc");
+
+    assert!(output.status.success(), "command should succeed");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "global_help");
+    assert_eq!(json["protocol"], "cli");
+}
+
+#[test]
 fn global_help_flag_works() {
     let output = uxc_command().arg("-h").output().expect("failed to run uxc");
 
@@ -12,6 +24,45 @@ fn global_help_flag_works() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Universal X-Protocol Call"));
     assert!(stdout.contains("describe"));
+}
+
+#[test]
+fn help_subcommand_defaults_to_json() {
+    let output = uxc_command()
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(output.status.success(), "command should succeed");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "global_help");
+}
+
+#[test]
+fn cache_and_auth_commands_default_to_json() {
+    let cache_output = uxc_command()
+        .arg("cache")
+        .arg("stats")
+        .output()
+        .expect("failed to run uxc cache stats");
+    assert!(cache_output.status.success(), "cache stats should succeed");
+    let cache_json: serde_json::Value =
+        serde_json::from_slice(&cache_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(cache_json["ok"], true);
+    assert_eq!(cache_json["kind"], "cache_stats");
+
+    let auth_output = uxc_command()
+        .arg("auth")
+        .arg("list")
+        .output()
+        .expect("failed to run uxc auth list");
+    assert!(auth_output.status.success(), "auth list should succeed");
+    let auth_json: serde_json::Value =
+        serde_json::from_slice(&auth_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(auth_json["ok"], true);
+    assert_eq!(auth_json["kind"], "auth_list");
 }
 
 #[test]
@@ -53,6 +104,49 @@ fn operation_help_works_with_dynamic_syntax() {
     assert_eq!(json["operation"], "get:/pets");
     assert_eq!(json["data"]["operation_id"], "get:/pets");
     assert_eq!(json["data"]["display_name"], "GET /pets");
+}
+
+#[test]
+fn dynamic_operation_help_accepts_text_flag_after_help() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("--no-cache")
+        .arg("get:/pets")
+        .arg("help")
+        .arg("--text")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(
+        output.status.success(),
+        "command should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Protocol: openapi"));
+    assert!(stdout.contains("Operation ID: get:/pets"));
 }
 
 #[test]
