@@ -18,7 +18,10 @@ fn test_load_from_file_not_exists() {
     let result = CacheConfig::load_from_file();
 
     // Should succeed with defaults
-    assert!(result.is_ok(), "Should return default config when file doesn't exist");
+    assert!(
+        result.is_ok(),
+        "Should return default config when file doesn't exist"
+    );
     let config = result.unwrap();
     assert!(config.enabled, "Default config should be enabled");
 
@@ -49,8 +52,9 @@ fn test_load_from_file_valid_config() {
 enabled = true
 ttl = 3600
 max_size = 1048576
-"#
-    ).expect("Failed to write config");
+"#,
+    )
+    .expect("Failed to write config");
 
     // Load config
     let result = CacheConfig::load_from_file();
@@ -88,8 +92,9 @@ fn test_load_from_file_invalid_values_fallback() {
 enabled = "not_a_bool"
 ttl = "not_a_number"
 max_size = -100
-"#
-    ).expect("Failed to write config");
+"#,
+    )
+    .expect("Failed to write config");
 
     // Load config - should use defaults for invalid values
     let result = CacheConfig::load_from_file();
@@ -132,13 +137,17 @@ ttl = 7200
 max_size = 2097152
 
 # Additional settings can go here
-"#
-    ).expect("Failed to write config");
+"#,
+    )
+    .expect("Failed to write config");
 
     // Load config
     let result = CacheConfig::load_from_file();
 
-    assert!(result.is_ok(), "Should successfully load config with comments");
+    assert!(
+        result.is_ok(),
+        "Should successfully load config with comments"
+    );
     let config = result.unwrap();
     assert!(config.enabled, "Config should be enabled");
     assert_eq!(config.ttl, 7200, "TTL should be 7200");
@@ -160,7 +169,10 @@ fn test_ensure_cache_dir_creates_directory() {
     let result = config.ensure_cache_dir();
 
     assert!(result.is_ok(), "Should successfully create cache directory");
-    assert!(temp_dir.path().exists(), "Cache directory should be created");
+    assert!(
+        temp_dir.path().exists(),
+        "Cache directory should be created"
+    );
 }
 
 #[test]
@@ -176,5 +188,8 @@ fn test_ensure_cache_dir_handles_existing_directory() {
     // ensure_cache_dir should succeed even if directory already exists
     let result = config.ensure_cache_dir();
 
-    assert!(result.is_ok(), "Should succeed when directory already exists");
+    assert!(
+        result.is_ok(),
+        "Should succeed when directory already exists"
+    );
 }

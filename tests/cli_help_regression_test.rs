@@ -12,7 +12,10 @@ fn without_http_scheme(url: &str) -> String {
 
 #[test]
 fn bare_invocation_outputs_json_global_help() {
-    let output = uxc_command().arg("help").output().expect("failed to run uxc");
+    let output = uxc_command()
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
 
     assert!(output.status.success(), "command should succeed");
     let json: serde_json::Value =
