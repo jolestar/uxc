@@ -29,6 +29,72 @@ use tonic::Status;
 use tonic_reflection::pb as reflection;
 use tracing::{debug, info};
 
+/// Trait for executing grpcurl commands (abstracted for testing)
+#[async_trait]
+trait GrpcurlExecutor: Send + Sync {
+    /// Execute grpcurl with the given arguments and return the result
+    async fn execute(
+        &self,
+        plaintext: bool,
+        headers: Vec<String>,
+        request_json: &str,
+        target: &str,
+        method: &str,
+    ) -> Result<GrpcurlResult>;
+}
+
+/// Result of a grpcurl execution
+#[derive(Clone)]
+struct GrpcurlResult {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// Default grpcurl executor using tokio::process::Command
+struct DefaultGrpcurlExecutor;
+
+#[async_trait]
+impl GrpcurlExecutor for DefaultGrpcurlExecutor {
+    async fn execute(
+        &self,
+        plaintext: bool,
+        headers: Vec<String>,
+        request_json: &str,
+        target: &str,
+        method: &str,
+    ) -> Result<GrpcurlResult> {
+        let mut cmd = tokio::process::Command::new("grpcurl");
+        cmd.arg("-format").arg("json");
+
+        if plaintext {
+            cmd.arg("-plaintext");
+        }
+
+        for header in headers {
+            cmd.arg("-H").arg(header);
+        }
+
+        cmd.arg("-d").arg(request_json).arg(target).arg(method);
+
+        let output = cmd.output().await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "grpcurl is required for gRPC unary calls. Install grpcurl and retry."
+                )
+            } else {
+                anyhow::anyhow!("Failed to execute grpcurl: {}", e)
+            }
+        })?;
+
+        Ok(GrpcurlResult {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
+    }
+}
+
 /// gRPC adapter implementation
 pub struct GrpcAdapter {
     /// In-memory cache for reflection clients and descriptors
@@ -37,6 +103,8 @@ pub struct GrpcAdapter {
     schema_cache: Option<Arc<dyn crate::cache::Cache>>,
     /// Authentication profile
     auth_profile: Option<Profile>,
+    /// grpcurl executor (abstracted for testing)
+    grpcurl_executor: Arc<dyn GrpcurlExecutor>,
 }
 
 /// Cached reflection data for a server
@@ -71,7 +139,15 @@ impl GrpcAdapter {
             in_memory_cache: Arc::new(RwLock::new(HashMap::new())),
             schema_cache: None,
             auth_profile: None,
+            grpcurl_executor: Arc::new(DefaultGrpcurlExecutor),
         }
+    }
+
+    /// Create a new adapter with a custom grpcurl executor (for testing)
+    #[cfg(test)]
+    fn with_executor(mut self, executor: Arc<dyn GrpcurlExecutor>) -> Self {
+        self.grpcurl_executor = executor;
+        self
     }
 
     pub fn with_cache(mut self, cache: Arc<dyn crate::cache::Cache>) -> Self {
@@ -716,49 +792,31 @@ impl GrpcAdapter {
         let attempts = Self::grpcurl_attempts(original_url, target);
         let mut last_error = String::new();
 
+        let headers = if let Some(profile) = &self.auth_profile {
+            profile.to_grpcurl_headers()?
+        } else {
+            Vec::new()
+        };
+
         for plaintext in attempts {
-            let mut cmd = tokio::process::Command::new("grpcurl");
-            cmd.arg("-format").arg("json");
+            let result = self
+                .grpcurl_executor
+                .execute(plaintext, headers.clone(), &request_json, target, full_method)
+                .await?;
 
-            if plaintext {
-                cmd.arg("-plaintext");
-            }
-
-            if let Some(profile) = &self.auth_profile {
-                for header in profile.to_grpcurl_headers()? {
-                    cmd.arg("-H").arg(header);
-                }
-            }
-
-            cmd.arg("-d")
-                .arg(&request_json)
-                .arg(target)
-                .arg(full_method);
-
-            let output = cmd.output().await.map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::anyhow!(
-                        "grpcurl is required for gRPC unary calls. Install grpcurl and retry."
-                    )
-                } else {
-                    anyhow::anyhow!("Failed to execute grpcurl: {}", e)
-                }
-            })?;
-
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if stdout.is_empty() {
+            if result.success {
+                if result.stdout.is_empty() {
                     return Ok(serde_json::json!({}));
                 }
 
-                return serde_json::from_str(&stdout).or_else(|_| {
+                return serde_json::from_str(&result.stdout).or_else(|_| {
                     Ok(serde_json::json!({
-                        "raw": stdout
+                        "raw": result.stdout
                     }))
                 });
             }
 
-            last_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            last_error = result.stderr;
             if last_error.is_empty() {
                 last_error = "grpcurl failed without stderr output".to_string();
             }
@@ -1004,6 +1062,28 @@ impl GrpcurlAuthHeaders for Profile {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// Mock grpcurl executor for testing
+    struct MockGrpcurlExecutor {
+        response: Option<GrpcurlResult>,
+    }
+
+    #[async_trait]
+    impl GrpcurlExecutor for MockGrpcurlExecutor {
+        async fn execute(
+            &self,
+            _plaintext: bool,
+            _headers: Vec<String>,
+            _request_json: &str,
+            _target: &str,
+            _method: &str,
+        ) -> Result<GrpcurlResult> {
+            self.response
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("No response configured"))
+        }
+    }
 
     #[test]
     fn test_parse_url() {
@@ -1242,6 +1322,359 @@ mod tests {
         assert_eq!(
             input_schema["schema"]["properties"]["name"]["type"],
             "string"
+        );
+    }
+
+    // New tests for grpcurl executor abstraction
+
+    #[tokio::test]
+    async fn test_invoke_unary_success_with_valid_json_response() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: Some(GrpcurlResult {
+                success: true,
+                stdout: r#"{"value": "42"}"#.to_string(),
+                stderr: String::new(),
+            }),
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Test".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let result = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result["value"], "42");
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_success_with_empty_response() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: Some(GrpcurlResult {
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Test".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let result = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result, serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_failure_with_stderr_output() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: Some(GrpcurlResult {
+                success: false,
+                stdout: String::new(),
+                stderr: "rpc error: code = NotFound desc = method not found".to_string(),
+            }),
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Test".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("gRPC unary invocation failed"));
+        assert!(err.to_string().contains("method not found"));
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_failure_without_stderr() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: Some(GrpcurlResult {
+                success: false,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Test".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("grpcurl failed without stderr output"));
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_success_with_non_json_output() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: Some(GrpcurlResult {
+                success: true,
+                stdout: "plain text response".to_string(),
+                stderr: String::new(),
+            }),
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Test".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let result = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap();
+
+        // Non-JSON output should be wrapped in "raw" field
+        assert_eq!(result["raw"], "plain text response");
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_rejects_server_streaming() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: None, // Should not be called
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Stream".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: true,
+            is_client_streaming: false,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("only unary methods are supported"));
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_rejects_client_streaming() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: None, // Should not be called
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Upload".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: false,
+            is_client_streaming: true,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("only unary methods are supported"));
+    }
+
+    #[tokio::test]
+    async fn test_invoke_unary_rejects_bidi_streaming() {
+        let mock_executor = Arc::new(MockGrpcurlExecutor {
+            response: None, // Should not be called
+        });
+
+        let adapter = GrpcAdapter::new().with_executor(mock_executor);
+        let method = MethodInfo {
+            name: "Chat".to_string(),
+            service_name: "test.Service".to_string(),
+            input_type: "test.Request".to_string(),
+            output_type: "test.Response".to_string(),
+            is_server_streaming: true,
+            is_client_streaming: true,
+            description: None,
+        };
+
+        let err = adapter
+            .call_method("localhost:50051", &method, HashMap::new())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("only unary methods are supported"));
+    }
+
+    // Test for reflection descriptor parsing
+
+    #[test]
+    fn test_descriptor_contains_service_matches_exact_name() {
+        let descriptor = FileDescriptorProto {
+            package: Some("example.v1".to_string()),
+            service: vec![prost_types::ServiceDescriptorProto {
+                name: Some("MyService".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(GrpcAdapter::descriptor_contains_service(
+            &descriptor,
+            "example.v1.MyService"
+        ));
+        assert!(!GrpcAdapter::descriptor_contains_service(
+            &descriptor,
+            "example.v2.MyService"
+        ));
+        assert!(!GrpcAdapter::descriptor_contains_service(
+            &descriptor,
+            "example.v1.OtherService"
+        ));
+    }
+
+    #[test]
+    fn test_descriptor_contains_service_handles_empty_package() {
+        let descriptor = FileDescriptorProto {
+            package: None,
+            service: vec![prost_types::ServiceDescriptorProto {
+                name: Some("MyService".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert!(GrpcAdapter::descriptor_contains_service(
+            &descriptor,
+            "MyService"
+        ));
+    }
+
+    #[test]
+    fn test_normalize_type_name_removes_leading_dot() {
+        assert_eq!(
+            GrpcAdapter::normalize_type_name(".example.Request"),
+            "example.Request"
+        );
+        assert_eq!(
+            GrpcAdapter::normalize_type_name("example.Request"),
+            "example.Request"
+        );
+        assert_eq!(GrpcAdapter::normalize_type_name(""), "");
+    }
+
+    #[test]
+    fn test_to_json_field_name_prefers_json_name() {
+        let field = FieldDescriptorProto {
+            name: Some("field_name".to_string()),
+            json_name: Some("fieldName".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(GrpcAdapter::to_json_field_name(&field), "fieldName");
+    }
+
+    #[test]
+    fn test_to_json_field_name_falls_back_to_name() {
+        let field = FieldDescriptorProto {
+            name: Some("field_name".to_string()),
+            json_name: None,
+            ..Default::default()
+        };
+
+        assert_eq!(GrpcAdapter::to_json_field_name(&field), "field_name");
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_ordering_for_http_urls() {
+        // http:// should try plaintext first
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("http://example.com:9000", "example.com:9000"),
+            vec![true]
+        );
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_ordering_for_https_urls() {
+        // https:// should try TLS only
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("https://example.com:9001", "example.com:9001"),
+            vec![false]
+        );
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_for_standard_grpc_ports() {
+        // Standard gRPC ports: 9000, 50051-50053, 9090
+        // Try plaintext first, then TLS
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("example.com:9000", "example.com:9000"),
+            vec![true, false]
+        );
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("example.com:50051", "example.com:50051"),
+            vec![true, false]
+        );
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_for_non_standard_ports() {
+        // Non-standard ports: try TLS first, then plaintext
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("example.com:8080", "example.com:8080"),
+            vec![false, true]
+        );
+    }
+
+    #[test]
+    fn test_grpcurl_attempts_deduplication() {
+        // Should dedup duplicate attempts
+        assert_eq!(
+            GrpcAdapter::grpcurl_attempts("http://example.com:9000", "example.com:9000"),
+            vec![true]
         );
     }
 }
