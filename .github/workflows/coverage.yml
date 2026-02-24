@@ -44,8 +44,8 @@ jobs:
 
       - name: Generate coverage reports
         run: |
-          cargo llvm-cov --all-features --workspace --html --output-dir html
-          cargo llvm-cov --all-features --workspace --json --output-path coverage.json --summary-only
+          cargo llvm-cov --all-features --workspace --html --output-dir html -- --test-threads=1
+          cargo llvm-cov --all-features --workspace --json --output-path coverage.json --summary-only -- --test-threads=1
 
       - name: Display coverage summary
         run: |
