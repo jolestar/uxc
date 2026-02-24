@@ -42,18 +42,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-coverage-
 
-      - name: Generate coverage data
-        run: cargo llvm-cov --all-features --workspace --html --json --summary-only --output-path coverage.json
+      - name: Generate coverage reports
+        run: |
+          cargo llvm-cov --all-features --workspace --html --output-dir html -- --test-threads=1
+          cargo llvm-cov --all-features --workspace --json --output-path coverage.json --summary-only -- --test-threads=1
 
       - name: Display coverage summary
         run: |
           echo "=== Coverage Summary ==="
-          cargo llvm-cov --all-features --workspace --summary-only
+          cargo llvm-cov --all-features --workspace --summary-only -- --test-threads=1
 
       - name: Check coverage threshold (65%)
         run: |
           echo "=== Checking Coverage Threshold ==="
-          cargo llvm-cov --all-features --workspace --summary-only --fail-under-lines 65
+          cargo llvm-cov --all-features --workspace --summary-only --fail-under-lines 65 -- --test-threads=1
           echo "✅ Coverage meets minimum threshold of 65%"
 
       - name: Upload coverage JSON report
@@ -67,9 +69,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
-          path: |
-            **/llvm-cov/html/index.html
-            **/llvm-cov/html/*.html
+          path: html/
           retention-days: 30
 
       - name: Coverage summary comment
