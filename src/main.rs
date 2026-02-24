@@ -369,8 +369,12 @@ fn normalize_global_args(raw_args: Vec<String>) -> Vec<String> {
         if is_global_kv {
             global_args.push(arg.clone());
             if let Some(value) = raw_args.get(idx + 1) {
-                global_args.push(value.clone());
-                idx += 2;
+                if !value.starts_with("--") {
+                    global_args.push(value.clone());
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
             } else {
                 idx += 1;
             }
@@ -604,7 +608,7 @@ fn global_help_envelope() -> Result<OutputEnvelope> {
 
 fn render_output(envelope: &OutputEnvelope, output_mode: OutputMode) -> Result<()> {
     match output_mode {
-        OutputMode::Json => print_json(envelope.clone()),
+        OutputMode::Json => print_json(envelope),
         OutputMode::Text => render_text_output(envelope),
     }
 }
@@ -720,9 +724,9 @@ fn render_text_output(envelope: &OutputEnvelope) -> Result<()> {
 fn decode_envelope_data<T: DeserializeOwned>(envelope: &OutputEnvelope) -> Result<T> {
     let value = envelope
         .data
-        .clone()
+        .as_ref()
         .ok_or_else(|| UxcError::GenericError(anyhow::anyhow!("Envelope data is missing")))?;
-    Ok(serde_json::from_value(value)?)
+    Ok(T::deserialize(value)?)
 }
 
 fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
@@ -892,7 +896,7 @@ fn load_auth_profile(cli_profile: Option<String>) -> Result<Option<Profile>> {
     }
 }
 
-fn print_json(envelope: OutputEnvelope) -> Result<()> {
+fn print_json(envelope: &OutputEnvelope) -> Result<()> {
     println!("{}", envelope.to_json()?);
     Ok(())
 }
