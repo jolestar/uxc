@@ -13,10 +13,13 @@ use crate::error::UxcError;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use prost::Message;
-use prost_types::FileDescriptorProto;
+use prost_types::{
+    field_descriptor_proto::{Label, Type},
+    DescriptorProto, EnumDescriptorProto, FieldDescriptorProto, FileDescriptorProto,
+};
 use reflection::{server_reflection_request, ServerReflectionRequest};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -47,7 +50,7 @@ struct CachedReflectionData {
 struct ServiceInfo {
     methods: HashMap<String, MethodInfo>,
     #[allow(dead_code)]
-    file_descriptor: FileDescriptorProto,
+    file_descriptors: Vec<FileDescriptorProto>,
 }
 
 /// Information about a gRPC method
@@ -202,12 +205,28 @@ impl GrpcAdapter {
         Ok(services)
     }
 
-    /// Get file descriptor for a service
-    async fn get_service_descriptor(
+    fn descriptor_contains_service(
+        descriptor: &FileDescriptorProto,
+        full_service_name: &str,
+    ) -> bool {
+        let package = descriptor.package.clone().unwrap_or_default();
+        descriptor.service.iter().any(|service| {
+            let service_name = service.name.clone().unwrap_or_default();
+            let candidate = if package.is_empty() {
+                service_name
+            } else {
+                format!("{}.{}", package, service_name)
+            };
+            candidate == full_service_name
+        })
+    }
+
+    /// Get file descriptors for a service symbol.
+    async fn get_service_descriptors(
         &self,
         endpoint: &Endpoint,
         service_name: &str,
-    ) -> Result<FileDescriptorProto> {
+    ) -> Result<Vec<FileDescriptorProto>> {
         let channel = endpoint.connect().await?;
         let mut client = reflection::server_reflection_client::ServerReflectionClient::new(channel)
             .max_decoding_message_size(usize::MAX);
@@ -236,23 +255,31 @@ impl GrpcAdapter {
                 reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(fd),
             ) = response.message_response
             {
-                if let Some(descriptor_bytes) = fd.file_descriptor_proto.first() {
+                let mut descriptors = Vec::new();
+                for descriptor_bytes in fd.file_descriptor_proto {
                     let descriptor = FileDescriptorProto::decode(descriptor_bytes.as_slice())
                         .context("Failed to decode file descriptor")?;
-                    return Ok(descriptor);
+                    descriptors.push(descriptor);
+                }
+                if !descriptors.is_empty() {
+                    return Ok(descriptors);
                 }
             }
         }
 
-        bail!("File descriptor not found for service: {}", service_name)
+        bail!("File descriptors not found for service: {}", service_name)
     }
 
     /// Parse service and methods from file descriptor
-    fn parse_service_info(&self, descriptor: &FileDescriptorProto) -> Result<ServiceInfo> {
+    fn parse_service_info(
+        &self,
+        service_descriptor: &FileDescriptorProto,
+        all_descriptors: Vec<FileDescriptorProto>,
+    ) -> Result<ServiceInfo> {
         let mut methods = HashMap::new();
-        let package = descriptor.package.clone().unwrap_or_default();
+        let package = service_descriptor.package.clone().unwrap_or_default();
 
-        for service in &descriptor.service {
+        for service in &service_descriptor.service {
             let service_name = service.name.clone().unwrap_or_default();
             let full_service_name = if package.is_empty() {
                 service_name
@@ -276,7 +303,7 @@ impl GrpcAdapter {
 
         Ok(ServiceInfo {
             methods,
-            file_descriptor: descriptor.clone(),
+            file_descriptors: all_descriptors,
         })
     }
 
@@ -301,10 +328,25 @@ impl GrpcAdapter {
                 continue;
             }
 
-            match self.get_service_descriptor(&endpoint, &service_name).await {
-                Ok(descriptor) => {
-                    if let Ok(info) = self.parse_service_info(&descriptor) {
-                        services.insert(service_name.clone(), info);
+            match self.get_service_descriptors(&endpoint, &service_name).await {
+                Ok(descriptors) => {
+                    let service_descriptor = descriptors
+                        .iter()
+                        .find(|descriptor| {
+                            Self::descriptor_contains_service(descriptor, &service_name)
+                        })
+                        .cloned()
+                        .or_else(|| descriptors.first().cloned());
+
+                    if let Some(descriptor) = service_descriptor {
+                        if let Ok(info) = self.parse_service_info(&descriptor, descriptors) {
+                            services.insert(service_name.clone(), info);
+                        }
+                    } else {
+                        tracing::warn!(
+                            "No descriptor payload returned for service symbol {}",
+                            service_name
+                        );
                     }
                 }
                 Err(e) => {
@@ -340,6 +382,15 @@ impl GrpcAdapter {
 
     /// Find method by full name (ServiceName/MethodName)
     async fn find_method(&self, url: &str, operation: &str) -> Result<MethodInfo> {
+        let (method_info, _) = self.find_method_context(url, operation).await?;
+        Ok(method_info)
+    }
+
+    async fn find_method_context(
+        &self,
+        url: &str,
+        operation: &str,
+    ) -> Result<(MethodInfo, Vec<FileDescriptorProto>)> {
         let (service_name, method_name) = operation.split_once('/').ok_or_else(|| {
             UxcError::InvalidArguments(format!(
                 "Invalid operation ID format: {}. Use ServiceName/MethodName",
@@ -364,7 +415,271 @@ impl GrpcAdapter {
             .get(method_name)
             .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
-        Ok(method_info.clone())
+        Ok((method_info.clone(), service_info.file_descriptors.clone()))
+    }
+
+    fn normalize_type_name(type_name: &str) -> String {
+        type_name.trim_start_matches('.').to_string()
+    }
+
+    fn to_json_field_name(field: &FieldDescriptorProto) -> String {
+        field
+            .json_name
+            .clone()
+            .or_else(|| field.name.clone())
+            .unwrap_or_default()
+    }
+
+    fn collect_message_descriptors(
+        prefix: &str,
+        messages: &[DescriptorProto],
+        message_index: &mut HashMap<String, DescriptorProto>,
+        enum_index: &mut HashMap<String, EnumDescriptorProto>,
+    ) {
+        for message in messages {
+            let message_name = message.name.clone().unwrap_or_default();
+            let full_name = if prefix.is_empty() {
+                message_name
+            } else {
+                format!("{}.{}", prefix, message_name)
+            };
+
+            message_index.insert(full_name.clone(), message.clone());
+            for enum_type in &message.enum_type {
+                if let Some(name) = enum_type.name.clone() {
+                    enum_index.insert(format!("{}.{}", full_name, name), enum_type.clone());
+                }
+            }
+
+            Self::collect_message_descriptors(
+                &full_name,
+                &message.nested_type,
+                message_index,
+                enum_index,
+            );
+        }
+    }
+
+    fn build_descriptor_indexes(
+        descriptors: &[FileDescriptorProto],
+    ) -> (
+        HashMap<String, DescriptorProto>,
+        HashMap<String, EnumDescriptorProto>,
+    ) {
+        let mut message_index = HashMap::new();
+        let mut enum_index = HashMap::new();
+
+        for descriptor in descriptors {
+            let package_prefix = descriptor.package.clone().unwrap_or_default();
+            Self::collect_message_descriptors(
+                &package_prefix,
+                &descriptor.message_type,
+                &mut message_index,
+                &mut enum_index,
+            );
+            for enum_type in &descriptor.enum_type {
+                if let Some(name) = enum_type.name.clone() {
+                    let full_name = if package_prefix.is_empty() {
+                        name
+                    } else {
+                        format!("{}.{}", package_prefix, name)
+                    };
+                    enum_index.insert(full_name, enum_type.clone());
+                }
+            }
+        }
+
+        (message_index, enum_index)
+    }
+
+    fn find_message_descriptor<'a>(
+        message_index: &'a HashMap<String, DescriptorProto>,
+        type_name: &str,
+    ) -> Option<&'a DescriptorProto> {
+        let normalized = Self::normalize_type_name(type_name);
+        if let Some(message) = message_index.get(&normalized) {
+            return Some(message);
+        }
+
+        let short_name = normalized.rsplit('.').next().unwrap_or(&normalized);
+        let mut matches = message_index
+            .iter()
+            .filter(|(name, _)| name.ends_with(&format!(".{}", short_name)))
+            .map(|(_, descriptor)| descriptor);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
+    }
+
+    fn find_enum_descriptor<'a>(
+        enum_index: &'a HashMap<String, EnumDescriptorProto>,
+        type_name: &str,
+    ) -> Option<&'a EnumDescriptorProto> {
+        let normalized = Self::normalize_type_name(type_name);
+        if let Some(enum_def) = enum_index.get(&normalized) {
+            return Some(enum_def);
+        }
+
+        let short_name = normalized.rsplit('.').next().unwrap_or(&normalized);
+        let mut matches = enum_index
+            .iter()
+            .filter(|(name, _)| name.ends_with(&format!(".{}", short_name)))
+            .map(|(_, descriptor)| descriptor);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
+    }
+
+    fn field_schema(
+        field: &FieldDescriptorProto,
+        message_index: &HashMap<String, DescriptorProto>,
+        enum_index: &HashMap<String, EnumDescriptorProto>,
+        visiting: &mut HashSet<String>,
+        depth: usize,
+    ) -> Value {
+        if depth == 0 {
+            return serde_json::json!({});
+        }
+
+        let base = match Type::try_from(field.r#type.unwrap_or(Type::Message as i32))
+            .unwrap_or(Type::String)
+        {
+            Type::Double | Type::Float => serde_json::json!({ "type": "number" }),
+            Type::Int64
+            | Type::Uint64
+            | Type::Int32
+            | Type::Fixed64
+            | Type::Fixed32
+            | Type::Uint32
+            | Type::Sfixed32
+            | Type::Sfixed64
+            | Type::Sint32
+            | Type::Sint64 => serde_json::json!({ "type": "integer" }),
+            Type::Bool => serde_json::json!({ "type": "boolean" }),
+            Type::String => serde_json::json!({ "type": "string" }),
+            Type::Bytes => serde_json::json!({ "type": "string", "format": "byte" }),
+            Type::Enum => {
+                let enum_values = field
+                    .type_name
+                    .as_deref()
+                    .and_then(|name| Self::find_enum_descriptor(enum_index, name))
+                    .map(|enum_def| {
+                        enum_def
+                            .value
+                            .iter()
+                            .filter_map(|value| value.name.clone())
+                            .map(Value::String)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if enum_values.is_empty() {
+                    serde_json::json!({ "type": "string" })
+                } else {
+                    serde_json::json!({ "type": "string", "enum": enum_values })
+                }
+            }
+            Type::Message | Type::Group => field
+                .type_name
+                .as_deref()
+                .map(|type_name| {
+                    Self::build_message_schema(
+                        type_name,
+                        message_index,
+                        enum_index,
+                        visiting,
+                        depth - 1,
+                    )
+                })
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+        };
+
+        if Label::try_from(field.label.unwrap_or(Label::Optional as i32)).unwrap_or(Label::Optional)
+            == Label::Repeated
+        {
+            serde_json::json!({
+                "type": "array",
+                "items": base
+            })
+        } else {
+            base
+        }
+    }
+
+    fn build_message_schema(
+        type_name: &str,
+        message_index: &HashMap<String, DescriptorProto>,
+        enum_index: &HashMap<String, EnumDescriptorProto>,
+        visiting: &mut HashSet<String>,
+        depth: usize,
+    ) -> Value {
+        if depth == 0 {
+            return serde_json::json!({
+                "$ref": format!("proto://{}", Self::normalize_type_name(type_name))
+            });
+        }
+
+        let normalized = Self::normalize_type_name(type_name);
+        if !visiting.insert(normalized.clone()) {
+            return serde_json::json!({
+                "$ref": format!("proto://{}", normalized)
+            });
+        }
+
+        let Some(message) = Self::find_message_descriptor(message_index, &normalized) else {
+            visiting.remove(&normalized);
+            return serde_json::json!({
+                "$ref": format!("proto://{}", normalized)
+            });
+        };
+
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+        for field in &message.field {
+            let field_name = Self::to_json_field_name(field);
+            if field_name.is_empty() {
+                continue;
+            }
+            let schema = Self::field_schema(field, message_index, enum_index, visiting, depth - 1);
+            if Label::try_from(field.label.unwrap_or(Label::Optional as i32))
+                .unwrap_or(Label::Optional)
+                == Label::Required
+            {
+                required.push(Value::String(field_name.clone()));
+            }
+            properties.insert(field_name, schema);
+        }
+        visiting.remove(&normalized);
+
+        let mut message_schema = serde_json::Map::new();
+        message_schema.insert("type".to_string(), Value::String("object".to_string()));
+        message_schema.insert("properties".to_string(), Value::Object(properties));
+        message_schema.insert("additionalProperties".to_string(), Value::Bool(false));
+        if !required.is_empty() {
+            message_schema.insert("required".to_string(), Value::Array(required));
+        }
+        Value::Object(message_schema)
+    }
+
+    fn build_operation_input_schema(
+        descriptors: &[FileDescriptorProto],
+        input_type: &str,
+    ) -> Value {
+        let (message_index, enum_index) = Self::build_descriptor_indexes(descriptors);
+        serde_json::json!({
+            "kind": "grpc_message",
+            "message_type": Self::normalize_type_name(input_type),
+            "schema": Self::build_message_schema(
+                input_type,
+                &message_index,
+                &enum_index,
+                &mut HashSet::new(),
+                8,
+            )
+        })
     }
 
     /// Execute a gRPC method call
@@ -612,7 +927,7 @@ impl Adapter for GrpcAdapter {
     }
 
     async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
-        let method_info = self.find_method(url, operation).await?;
+        let (method_info, descriptors) = self.find_method_context(url, operation).await?;
         let stream_type = match (
             method_info.is_client_streaming,
             method_info.is_server_streaming,
@@ -622,6 +937,8 @@ impl Adapter for GrpcAdapter {
             (true, false) => "client_streaming",
             (true, true) => "bidi_streaming",
         };
+        let input_type = method_info.input_type.clone();
+        let output_type = method_info.output_type.clone();
 
         Ok(OperationDetail {
             operation_id: format!("{}/{}", method_info.service_name, method_info.name),
@@ -629,12 +946,15 @@ impl Adapter for GrpcAdapter {
             description: method_info.description,
             parameters: vec![Parameter {
                 name: "request".to_string(),
-                param_type: method_info.input_type,
+                param_type: input_type.clone(),
                 required: true,
                 description: Some(format!("gRPC request payload ({})", stream_type)),
             }],
-            return_type: Some(method_info.output_type),
-            input_schema: None,
+            return_type: Some(output_type),
+            input_schema: Some(Self::build_operation_input_schema(
+                &descriptors,
+                &input_type,
+            )),
         })
     }
 
@@ -760,5 +1080,168 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("only unary methods are supported"));
+    }
+
+    #[test]
+    fn test_build_operation_input_schema_from_descriptor() {
+        let descriptor = FileDescriptorProto {
+            package: Some("example".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Request".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("id".to_string()),
+                        json_name: Some("id".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional as i32),
+                        r#type: Some(Type::String as i32),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("count".to_string()),
+                        json_name: Some("count".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional as i32),
+                        r#type: Some(Type::Int32 as i32),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("tags".to_string()),
+                        json_name: Some("tags".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Repeated as i32),
+                        r#type: Some(Type::String as i32),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("status".to_string()),
+                        json_name: Some("status".to_string()),
+                        number: Some(4),
+                        label: Some(Label::Optional as i32),
+                        r#type: Some(Type::Enum as i32),
+                        type_name: Some(".example.Status".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            enum_type: vec![EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                value: vec![
+                    prost_types::EnumValueDescriptorProto {
+                        name: Some("ACTIVE".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    prost_types::EnumValueDescriptorProto {
+                        name: Some("INACTIVE".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let input_schema = GrpcAdapter::build_operation_input_schema(
+            std::slice::from_ref(&descriptor),
+            ".example.Request",
+        );
+        assert_eq!(input_schema["kind"], "grpc_message");
+        assert_eq!(input_schema["message_type"], "example.Request");
+        assert_eq!(input_schema["schema"]["properties"]["id"]["type"], "string");
+        assert_eq!(
+            input_schema["schema"]["properties"]["count"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            input_schema["schema"]["properties"]["tags"]["type"],
+            "array"
+        );
+        assert_eq!(
+            input_schema["schema"]["properties"]["status"]["enum"][0],
+            "ACTIVE"
+        );
+    }
+
+    #[test]
+    fn test_short_name_lookup_returns_none_when_ambiguous() {
+        let mut message_index = HashMap::new();
+        message_index.insert(
+            "pkg1.User".to_string(),
+            DescriptorProto {
+                name: Some("User".to_string()),
+                ..Default::default()
+            },
+        );
+        message_index.insert(
+            "pkg2.User".to_string(),
+            DescriptorProto {
+                name: Some("User".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(GrpcAdapter::find_message_descriptor(&message_index, ".other.User").is_none());
+
+        let mut enum_index = HashMap::new();
+        enum_index.insert(
+            "pkg1.Status".to_string(),
+            EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                ..Default::default()
+            },
+        );
+        enum_index.insert(
+            "pkg2.Status".to_string(),
+            EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(GrpcAdapter::find_enum_descriptor(&enum_index, ".other.Status").is_none());
+    }
+
+    #[test]
+    fn test_build_operation_input_schema_uses_types_from_multiple_descriptors() {
+        let service_descriptor = FileDescriptorProto {
+            package: Some("service".to_string()),
+            service: vec![prost_types::ServiceDescriptorProto {
+                name: Some("Echo".to_string()),
+                method: vec![prost_types::MethodDescriptorProto {
+                    name: Some("Call".to_string()),
+                    input_type: Some(".dep.Request".to_string()),
+                    output_type: Some(".dep.Response".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let dependency_descriptor = FileDescriptorProto {
+            package: Some("dep".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Request".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("name".to_string()),
+                    json_name: Some("name".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional as i32),
+                    r#type: Some(Type::String as i32),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let input_schema = GrpcAdapter::build_operation_input_schema(
+            &[service_descriptor, dependency_descriptor],
+            ".dep.Request",
+        );
+        assert_eq!(
+            input_schema["schema"]["properties"]["name"]["type"],
+            "string"
+        );
     }
 }

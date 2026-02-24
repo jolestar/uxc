@@ -8,8 +8,8 @@ use crate::auth::Profile;
 use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::Value;
-use std::collections::HashMap;
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -22,6 +22,7 @@ pub struct OpenAPIAdapter {
 }
 
 impl OpenAPIAdapter {
+    const MAX_SCHEMA_EXPANSION_DEPTH: usize = 8;
     const SCHEMA_ENDPOINTS: [&'static str; 7] = [
         "/openapi.json",
         "/swagger.json",
@@ -156,6 +157,241 @@ impl OpenAPIAdapter {
 
         Ok(None)
     }
+
+    fn resolve_local_ref<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
+        if !reference.starts_with("#/") {
+            return None;
+        }
+        root.pointer(&reference[1..])
+    }
+
+    fn dereference_value<'a>(value: &'a Value, root: &'a Value) -> &'a Value {
+        let mut current = value;
+        for _ in 0..Self::MAX_SCHEMA_EXPANSION_DEPTH {
+            let Some(reference) = current.get("$ref").and_then(|v| v.as_str()) else {
+                break;
+            };
+            let Some(resolved) = Self::resolve_local_ref(root, reference) else {
+                break;
+            };
+            current = resolved;
+        }
+        current
+    }
+
+    fn schema_type_hint(schema: &Value, root: &Value) -> String {
+        let resolved = Self::dereference_value(schema, root);
+        if let Some(type_name) = resolved.get("type").and_then(|t| t.as_str()) {
+            return type_name.to_string();
+        }
+        if resolved.get("properties").is_some()
+            || resolved.get("allOf").is_some()
+            || resolved.get("oneOf").is_some()
+            || resolved.get("anyOf").is_some()
+        {
+            return "object".to_string();
+        }
+        if resolved.get("items").is_some() {
+            return "array".to_string();
+        }
+        "string".to_string()
+    }
+
+    fn parse_parameter(parameter: &Value, root: &Value) -> Option<Parameter> {
+        let resolved = Self::dereference_value(parameter, root);
+        let name = resolved.get("name").and_then(|n| n.as_str())?;
+        let param_type = resolved
+            .get("schema")
+            .map(|schema| Self::schema_type_hint(schema, root))
+            .or_else(|| {
+                if resolved.get("content").is_some() {
+                    Some("object".to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "string".to_string());
+
+        Some(Parameter {
+            name: name.to_string(),
+            param_type,
+            required: resolved
+                .get("required")
+                .and_then(|r| r.as_bool())
+                .unwrap_or(false),
+            description: resolved
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string()),
+        })
+    }
+
+    fn collect_parameters(
+        path_item: &Value,
+        operation_spec: &Value,
+        root: &Value,
+    ) -> Vec<Parameter> {
+        let mut parameters = Vec::new();
+        let mut seen = HashSet::new();
+
+        for source in [
+            path_item.get("parameters").and_then(|p| p.as_array()),
+            operation_spec.get("parameters").and_then(|p| p.as_array()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for parameter in source {
+                let resolved = Self::dereference_value(parameter, root);
+                let key = format!(
+                    "{}:{}",
+                    resolved.get("in").and_then(|v| v.as_str()).unwrap_or(""),
+                    resolved.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                );
+                if seen.contains(&key) {
+                    continue;
+                }
+                if let Some(parsed) = Self::parse_parameter(parameter, root) {
+                    seen.insert(key);
+                    parameters.push(parsed);
+                }
+            }
+        }
+
+        parameters
+    }
+
+    fn expand_schema(
+        value: &Value,
+        root: &Value,
+        visited: &mut HashSet<String>,
+        depth: usize,
+    ) -> Value {
+        if depth == 0 {
+            return value.clone();
+        }
+
+        match value {
+            Value::Object(object) => {
+                if let Some(reference) = object.get("$ref").and_then(|v| v.as_str()) {
+                    if !visited.insert(reference.to_string()) {
+                        return serde_json::json!({ "$ref": reference });
+                    }
+
+                    let expanded_target = Self::resolve_local_ref(root, reference)
+                        .map(|target| Self::expand_schema(target, root, visited, depth - 1))
+                        .unwrap_or_else(|| value.clone());
+                    visited.remove(reference);
+
+                    if object.len() == 1 {
+                        return expanded_target;
+                    }
+
+                    if let Value::Object(mut merged) = expanded_target {
+                        for (key, nested) in object {
+                            if key == "$ref" {
+                                continue;
+                            }
+                            merged.insert(
+                                key.clone(),
+                                Self::expand_schema(nested, root, visited, depth - 1),
+                            );
+                        }
+                        return Value::Object(merged);
+                    }
+
+                    let mut merged = Map::new();
+                    merged.insert("allOf".to_string(), Value::Array(vec![expanded_target]));
+                    for (key, nested) in object {
+                        if key == "$ref" {
+                            continue;
+                        }
+                        merged.insert(
+                            key.clone(),
+                            Self::expand_schema(nested, root, visited, depth - 1),
+                        );
+                    }
+                    return Value::Object(merged);
+                }
+
+                let mut expanded = Map::new();
+                for (key, nested) in object {
+                    expanded.insert(
+                        key.clone(),
+                        Self::expand_schema(nested, root, visited, depth - 1),
+                    );
+                }
+                Value::Object(expanded)
+            }
+            Value::Array(items) => Value::Array(
+                items
+                    .iter()
+                    .map(|item| Self::expand_schema(item, root, visited, depth - 1))
+                    .collect(),
+            ),
+            _ => value.clone(),
+        }
+    }
+
+    fn extract_request_body_input_schema(operation_spec: &Value, root: &Value) -> Option<Value> {
+        let request_body_raw = operation_spec.get("requestBody")?;
+        let request_body = Self::dereference_value(request_body_raw, root);
+        let content = request_body.get("content")?.as_object()?;
+
+        let mut content_map = Map::new();
+        for (media_type, media_spec) in content {
+            let Some(schema) = media_spec.get("schema") else {
+                continue;
+            };
+
+            let source_ref = schema
+                .get("$ref")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string());
+            let expanded_schema = Self::expand_schema(
+                schema,
+                root,
+                &mut HashSet::new(),
+                Self::MAX_SCHEMA_EXPANSION_DEPTH,
+            );
+
+            let mut media_obj = Map::new();
+            media_obj.insert("schema".to_string(), expanded_schema);
+            if let Some(reference) = source_ref {
+                media_obj.insert("source_ref".to_string(), Value::String(reference));
+            }
+            if let Some(example) = media_spec.get("example") {
+                media_obj.insert("example".to_string(), example.clone());
+            }
+            content_map.insert(media_type.clone(), Value::Object(media_obj));
+        }
+        if content_map.is_empty() {
+            return None;
+        }
+
+        let mut body = Map::new();
+        body.insert(
+            "kind".to_string(),
+            Value::String("openapi_request_body".to_string()),
+        );
+        body.insert(
+            "required".to_string(),
+            Value::Bool(
+                request_body
+                    .get("required")
+                    .and_then(|r| r.as_bool())
+                    .unwrap_or(false),
+            ),
+        );
+        if let Some(description) = request_body.get("description").and_then(|d| d.as_str()) {
+            body.insert(
+                "description".to_string(),
+                Value::String(description.to_string()),
+            );
+        }
+        body.insert("content".to_string(), Value::Object(content_map));
+        Some(Value::Object(body))
+    }
 }
 
 impl Default for OpenAPIAdapter {
@@ -226,31 +462,7 @@ impl Adapter for OpenAPIAdapter {
 
                         let operation_id = Self::operation_id(&method, path);
                         let display_name = Self::display_name(&method, path);
-
-                        let mut parameters = Vec::new();
-                        if let Some(params) = spec.get("parameters").and_then(|p| p.as_array()) {
-                            for param in params {
-                                if let Some(name) = param.get("name").and_then(|n| n.as_str()) {
-                                    parameters.push(Parameter {
-                                        name: name.to_string(),
-                                        param_type: param
-                                            .get("schema")
-                                            .and_then(|s| s.get("type"))
-                                            .and_then(|t| t.as_str())
-                                            .unwrap_or("string")
-                                            .to_string(),
-                                        required: param
-                                            .get("required")
-                                            .and_then(|r| r.as_bool())
-                                            .unwrap_or(false),
-                                        description: param
-                                            .get("description")
-                                            .and_then(|d| d.as_str())
-                                            .map(|s| s.to_string()),
-                                    });
-                                }
-                            }
-                        }
+                        let parameters = Self::collect_parameters(methods, spec, &schema);
 
                         operations.push(Operation {
                             operation_id,
@@ -272,19 +484,36 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
-        let operations = self.list_operations(url).await?;
-        let op = operations
-            .iter()
-            .find(|o| o.operation_id == operation)
+        let (method, path) = Self::parse_operation_id(operation)?;
+        let schema = self.fetch_schema(url).await?;
+        let paths = schema
+            .get("paths")
+            .and_then(|p| p.as_object())
+            .ok_or_else(|| {
+                UxcError::SchemaRetrievalFailed("OpenAPI schema missing paths".to_string())
+            })?;
+        let path_item = paths
+            .get(&path)
+            .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
+        let operation_spec = path_item
+            .get(&method)
             .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
+        let parameters = Self::collect_parameters(path_item, operation_spec, &schema);
+        let description = operation_spec
+            .get("description")
+            .or(operation_spec.get("summary"))
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+        let input_schema = Self::extract_request_body_input_schema(operation_spec, &schema);
+
         Ok(OperationDetail {
-            operation_id: op.operation_id.clone(),
-            display_name: op.display_name.clone(),
-            description: op.description.clone(),
-            parameters: op.parameters.clone(),
-            return_type: op.return_type.clone(),
-            input_schema: None,
+            operation_id: operation.to_string(),
+            display_name: Self::display_name(&method, &path),
+            description,
+            parameters,
+            return_type: None,
+            input_schema,
         })
     }
 
@@ -429,5 +658,115 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn describe_operation_includes_expanded_request_body_schema() {
+        let mut server = mockito::Server::new_async().await;
+        let _openapi = server
+            .mock("GET", "/openapi.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "Test", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "post": {
+        "summary": "Add a new pet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PetRequest" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PetRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/Category" }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" }
+        }
+      }
+    }
+  }
+}"##,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        let detail = adapter
+            .describe_operation(&server.url(), "post:/pet")
+            .await
+            .unwrap();
+
+        let input_schema = detail.input_schema.expect("input schema should exist");
+        assert_eq!(input_schema["kind"], "openapi_request_body");
+        assert_eq!(input_schema["required"], true);
+        assert_eq!(
+            input_schema["content"]["application/json"]["source_ref"],
+            "#/components/schemas/PetRequest"
+        );
+        assert_eq!(
+            input_schema["content"]["application/json"]["schema"]["properties"]["category"]
+                ["properties"]["id"]["type"],
+            "integer"
+        );
+    }
+
+    #[tokio::test]
+    async fn describe_operation_omits_input_schema_when_request_body_has_no_schema() {
+        let mut server = mockito::Server::new_async().await;
+        let _openapi = server
+            .mock("GET", "/openapi.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "Test", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "post": {
+        "summary": "Add a new pet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": { "name": "doggie" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        let detail = adapter
+            .describe_operation(&server.url(), "post:/pet")
+            .await
+            .unwrap();
+        assert!(detail.input_schema.is_none());
     }
 }

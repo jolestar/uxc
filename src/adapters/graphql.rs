@@ -13,8 +13,8 @@ use super::{
 use crate::auth::Profile;
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use serde_json::Value;
-use std::collections::HashMap;
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -25,6 +25,8 @@ pub struct GraphQLAdapter {
 }
 
 impl GraphQLAdapter {
+    const MAX_INPUT_SCHEMA_DEPTH: usize = 8;
+
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -137,76 +139,21 @@ impl GraphQLAdapter {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
-                            type {
-                                name
-                                kind
-                                ofType {
-                                    name
-                                    kind
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     mutationType {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
-                            type {
-                                name
-                                kind
-                                ofType {
-                                    name
-                                    kind
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     subscriptionType {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     types {
@@ -221,11 +168,54 @@ impl GraphQLAdapter {
                             name
                             description
                             type {
-                                name
+                                ...TypeRef
+                            }
+                        }
+                    }
+                }
+            }
+
+            fragment FieldInfo on __Field {
+                name
+                description
+                args {
+                    name
+                    description
+                    type {
+                        ...TypeRef
+                    }
+                }
+                type {
+                    ...TypeRef
+                }
+            }
+
+            fragment TypeRef on __Type {
+                kind
+                name
+                ofType {
+                    kind
+                    name
+                    ofType {
+                        kind
+                        name
+                        ofType {
+                            kind
+                            name
+                            ofType {
                                 kind
+                                name
                                 ofType {
-                                    name
                                     kind
+                                    name
+                                    ofType {
+                                        kind
+                                        name
+                                        ofType {
+                                            kind
+                                            name
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -405,6 +395,245 @@ impl GraphQLAdapter {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn find_operation_field<'a>(schema: &'a Value, operation: &str) -> Option<&'a Value> {
+        let (root_key, field_name) = if let Some(name) = operation.strip_prefix("query/") {
+            ("queryType", name)
+        } else if let Some(name) = operation.strip_prefix("mutation/") {
+            ("mutationType", name)
+        } else if let Some(name) = operation.strip_prefix("subscription/") {
+            ("subscriptionType", name)
+        } else {
+            return None;
+        };
+
+        let fields = schema
+            .get("data")?
+            .get("__schema")?
+            .get(root_key)?
+            .get("fields")?
+            .as_array()?;
+
+        fields
+            .iter()
+            .find(|field| field.get("name").and_then(|n| n.as_str()) == Some(field_name))
+    }
+
+    fn build_type_index(schema: &Value) -> HashMap<String, &Value> {
+        let mut type_index = HashMap::new();
+        if let Some(types) = schema
+            .get("data")
+            .and_then(|d| d.get("__schema"))
+            .and_then(|s| s.get("types"))
+            .and_then(|t| t.as_array())
+        {
+            for type_def in types {
+                if let Some(name) = type_def.get("name").and_then(|n| n.as_str()) {
+                    type_index.insert(name.to_string(), type_def);
+                }
+            }
+        }
+        type_index
+    }
+
+    fn scalar_schema(type_name: Option<&str>) -> Value {
+        match type_name.unwrap_or("String") {
+            "String" | "ID" => serde_json::json!({ "type": "string" }),
+            "Int" => serde_json::json!({ "type": "integer" }),
+            "Float" => serde_json::json!({ "type": "number" }),
+            "Boolean" => serde_json::json!({ "type": "boolean" }),
+            other => serde_json::json!({
+                "type": "string",
+                "x-graphql-scalar": other
+            }),
+        }
+    }
+
+    fn graphql_type_to_input_schema(
+        type_info: &Value,
+        type_index: &HashMap<String, &Value>,
+        visiting: &mut HashSet<String>,
+        depth: usize,
+    ) -> (Value, bool) {
+        if depth == 0 {
+            return (serde_json::json!({}), false);
+        }
+
+        let kind = type_info
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("UNKNOWN");
+
+        match kind {
+            "NON_NULL" => {
+                let inner = type_info.get("ofType").unwrap_or(&Value::Null);
+                let (schema, _) =
+                    Self::graphql_type_to_input_schema(inner, type_index, visiting, depth - 1);
+                (schema, true)
+            }
+            "LIST" => {
+                let inner = type_info.get("ofType").unwrap_or(&Value::Null);
+                let (items, _) =
+                    Self::graphql_type_to_input_schema(inner, type_index, visiting, depth - 1);
+                (
+                    serde_json::json!({ "type": "array", "items": items }),
+                    false,
+                )
+            }
+            "SCALAR" => (
+                Self::scalar_schema(type_info.get("name").and_then(|n| n.as_str())),
+                false,
+            ),
+            "ENUM" => {
+                let type_name = type_info.get("name").and_then(|n| n.as_str());
+                if let Some(enum_def) = type_name.and_then(|name| type_index.get(name).copied()) {
+                    let values = enum_def
+                        .get("enumValues")
+                        .and_then(|v| v.as_array())
+                        .map(|vals| {
+                            vals.iter()
+                                .filter_map(|item| item.get("name").and_then(|n| n.as_str()))
+                                .map(|s| Value::String(s.to_string()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    return (
+                        serde_json::json!({
+                            "type": "string",
+                            "enum": values
+                        }),
+                        false,
+                    );
+                }
+                (serde_json::json!({ "type": "string" }), false)
+            }
+            "INPUT_OBJECT" => {
+                let Some(type_name) = type_info.get("name").and_then(|n| n.as_str()) else {
+                    return (serde_json::json!({ "type": "object" }), false);
+                };
+
+                if !visiting.insert(type_name.to_string()) {
+                    return (
+                        serde_json::json!({
+                            "$ref": format!("graphql://{}", type_name)
+                        }),
+                        false,
+                    );
+                }
+
+                let mut properties = Map::new();
+                let mut required = Vec::new();
+                if let Some(type_def) = type_index.get(type_name).copied() {
+                    if let Some(fields) = type_def.get("inputFields").and_then(|f| f.as_array()) {
+                        for field in fields {
+                            let Some(name) = field.get("name").and_then(|n| n.as_str()) else {
+                                continue;
+                            };
+                            let Some(field_type) = field.get("type") else {
+                                continue;
+                            };
+
+                            let (mut field_schema, is_required) =
+                                Self::graphql_type_to_input_schema(
+                                    field_type,
+                                    type_index,
+                                    visiting,
+                                    depth - 1,
+                                );
+                            if let Some(description) =
+                                field.get("description").and_then(|d| d.as_str())
+                            {
+                                if let Value::Object(ref mut obj) = field_schema {
+                                    obj.insert(
+                                        "description".to_string(),
+                                        Value::String(description.to_string()),
+                                    );
+                                }
+                            }
+
+                            properties.insert(name.to_string(), field_schema);
+                            if is_required {
+                                required.push(Value::String(name.to_string()));
+                            }
+                        }
+                    }
+                }
+                visiting.remove(type_name);
+
+                let mut object_schema = Map::new();
+                object_schema.insert("type".to_string(), Value::String("object".to_string()));
+                object_schema.insert("properties".to_string(), Value::Object(properties));
+                object_schema.insert("additionalProperties".to_string(), Value::Bool(false));
+                if !required.is_empty() {
+                    object_schema.insert("required".to_string(), Value::Array(required));
+                }
+                (Value::Object(object_schema), false)
+            }
+            _ => {
+                let mut fallback = Map::new();
+                fallback.insert("type".to_string(), Value::String("object".to_string()));
+                if let Some(type_name) = type_info.get("name").and_then(|n| n.as_str()) {
+                    fallback.insert(
+                        "x-graphql-type".to_string(),
+                        Value::String(type_name.to_string()),
+                    );
+                }
+                (Value::Object(fallback), false)
+            }
+        }
+    }
+
+    fn build_operation_input_schema(schema: &Value, operation: &str) -> Option<Value> {
+        let field = Self::find_operation_field(schema, operation)?;
+        let type_index = Self::build_type_index(schema);
+
+        let mut properties = Map::new();
+        let mut required = Vec::new();
+        if let Some(args) = field.get("args").and_then(|a| a.as_array()) {
+            for arg in args {
+                let Some(name) = arg.get("name").and_then(|n| n.as_str()) else {
+                    continue;
+                };
+                let Some(type_info) = arg.get("type") else {
+                    continue;
+                };
+
+                let (mut schema, is_required) = Self::graphql_type_to_input_schema(
+                    type_info,
+                    &type_index,
+                    &mut HashSet::new(),
+                    Self::MAX_INPUT_SCHEMA_DEPTH,
+                );
+
+                if let Some(description) = arg.get("description").and_then(|d| d.as_str()) {
+                    if let Value::Object(ref mut obj) = schema {
+                        obj.insert(
+                            "description".to_string(),
+                            Value::String(description.to_string()),
+                        );
+                    }
+                }
+
+                properties.insert(name.to_string(), schema);
+                if is_required {
+                    required.push(Value::String(name.to_string()));
+                }
+            }
+        }
+
+        let mut input = Map::new();
+        input.insert(
+            "kind".to_string(),
+            Value::String("graphql_arguments".to_string()),
+        );
+        input.insert("type".to_string(), Value::String("object".to_string()));
+        input.insert("properties".to_string(), Value::Object(properties));
+        input.insert("additionalProperties".to_string(), Value::Bool(false));
+        if !required.is_empty() {
+            input.insert("required".to_string(), Value::Array(required));
+        }
+        Some(Value::Object(input))
     }
 
     /// Find operation details from parsed operations
@@ -593,6 +822,7 @@ impl Adapter for GraphQLAdapter {
 
         let op = Self::find_operation(&schema, operation)
             .ok_or_else(|| anyhow!("Operation '{}' not found", operation))?;
+        let input_schema = Self::build_operation_input_schema(&schema, operation);
 
         Ok(OperationDetail {
             operation_id: op.operation_id,
@@ -600,7 +830,7 @@ impl Adapter for GraphQLAdapter {
             description: op.description,
             parameters: op.parameters,
             return_type: op.return_type,
-            input_schema: None,
+            input_schema,
         })
     }
 
@@ -792,5 +1022,100 @@ mod tests {
 
         let mutation = GraphQLAdapter::build_query(OperationType::Mutation, "addStar", None);
         assert_eq!(mutation, "mutation { addStar }");
+    }
+
+    #[test]
+    fn test_introspection_query_includes_deep_type_ref_fragment() {
+        let query = GraphQLAdapter::get_introspection_query();
+        assert!(query.contains("fragment TypeRef on __Type"));
+        assert!(query.matches("ofType").count() >= 6);
+    }
+
+    #[test]
+    fn test_build_operation_input_schema_expands_input_objects_and_enums() {
+        let schema = serde_json::json!({
+            "data": {
+                "__schema": {
+                    "queryType": {
+                        "name": "Query",
+                        "fields": [
+                            {
+                                "name": "user",
+                                "args": [
+                                    {
+                                        "name": "id",
+                                        "description": "User id",
+                                        "type": {
+                                            "kind": "NON_NULL",
+                                            "ofType": {
+                                                "kind": "SCALAR",
+                                                "name": "ID"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "filter",
+                                        "type": {
+                                            "kind": "INPUT_OBJECT",
+                                            "name": "UserFilter"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "mutationType": null,
+                    "subscriptionType": null,
+                    "types": [
+                        {
+                            "name": "UserFilter",
+                            "kind": "INPUT_OBJECT",
+                            "inputFields": [
+                                {
+                                    "name": "status",
+                                    "type": {
+                                        "kind": "ENUM",
+                                        "name": "UserStatus"
+                                    }
+                                },
+                                {
+                                    "name": "tags",
+                                    "type": {
+                                        "kind": "LIST",
+                                        "ofType": {
+                                            "kind": "SCALAR",
+                                            "name": "String"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "UserStatus",
+                            "kind": "ENUM",
+                            "enumValues": [
+                                { "name": "ACTIVE" },
+                                { "name": "INACTIVE" }
+                            ]
+                        }
+                    ]
+                }
+            }
+        });
+
+        let input_schema =
+            GraphQLAdapter::build_operation_input_schema(&schema, "query/user").unwrap();
+        assert_eq!(input_schema["kind"], "graphql_arguments");
+        assert_eq!(input_schema["type"], "object");
+        assert_eq!(input_schema["properties"]["id"]["type"], "string");
+        assert_eq!(
+            input_schema["properties"]["filter"]["properties"]["status"]["enum"][0],
+            "ACTIVE"
+        );
+        assert_eq!(
+            input_schema["properties"]["filter"]["properties"]["tags"]["type"],
+            "array"
+        );
+        assert_eq!(input_schema["required"][0], "id");
     }
 }

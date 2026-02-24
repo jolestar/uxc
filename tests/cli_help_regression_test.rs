@@ -22,7 +22,7 @@ fn operation_help_works_with_dynamic_syntax() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{
+            r##"{
   "openapi": "3.0.0",
   "info": { "title": "test", "version": "1.0.0" },
   "paths": {
@@ -33,12 +33,13 @@ fn operation_help_works_with_dynamic_syntax() {
       }
     }
   }
-}"#,
+}"##,
         )
         .create();
 
     let output = uxc_command()
         .arg(server.url())
+        .arg("--no-cache")
         .arg("get:/pets")
         .arg("help")
         .output()
@@ -52,6 +53,73 @@ fn operation_help_works_with_dynamic_syntax() {
     assert_eq!(json["operation"], "get:/pets");
     assert_eq!(json["data"]["operation_id"], "get:/pets");
     assert_eq!(json["data"]["display_name"], "GET /pets");
+}
+
+#[test]
+fn operation_help_includes_openapi_request_body_schema() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "post": {
+        "summary": "add pet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Pet" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" }
+        }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("--no-cache")
+        .arg("post:/pet")
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(
+        output.status.success(),
+        "command should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["kind"], "operation_detail");
+    assert_eq!(json["data"]["input_schema"]["kind"], "openapi_request_body");
+    assert_eq!(
+        json["data"]["input_schema"]["content"]["application/json"]["schema"]["properties"]["name"]
+            ["type"],
+        "string"
+    );
 }
 
 #[test]
@@ -99,6 +167,7 @@ fn call_subcommand_executes_operation() {
 
     let output = uxc_command()
         .arg(server.url())
+        .arg("--no-cache")
         .arg("call")
         .arg("get:/pets")
         .output()
@@ -137,6 +206,7 @@ fn list_outputs_operation_id_and_display_name() {
 
     let output = uxc_command()
         .arg(server.url())
+        .arg("--no-cache")
         .arg("list")
         .output()
         .expect("failed to run uxc");
