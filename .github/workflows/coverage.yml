@@ -42,8 +42,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-coverage-
 
-      - name: Generate coverage data
-        run: cargo llvm-cov --all-features --workspace --html --json --summary-only --output-path coverage.json
+      - name: Generate coverage reports
+        run: |
+          cargo llvm-cov --all-features --workspace --html --output-dir html
+          cargo llvm-cov --all-features --workspace --json --output-path coverage.json --summary-only
 
       - name: Display coverage summary
         run: |
@@ -67,9 +69,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
-          path: |
-            **/llvm-cov/html/index.html
-            **/llvm-cov/html/*.html
+          path: html/
           retention-days: 30
 
       - name: Coverage summary comment
