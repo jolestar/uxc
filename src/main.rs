@@ -10,6 +10,7 @@ use tracing::info;
 mod adapters;
 mod auth;
 mod cache;
+pub mod cli;
 mod error;
 mod output;
 mod schema_mapping;

@@ -7,6 +7,7 @@
 pub mod adapters;
 pub mod auth;
 pub mod cache;
+pub mod cli;
 pub mod error;
 pub mod output;
 pub mod protocol;
