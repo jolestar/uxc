@@ -139,76 +139,21 @@ impl GraphQLAdapter {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
-                            type {
-                                name
-                                kind
-                                ofType {
-                                    name
-                                    kind
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     mutationType {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
-                            type {
-                                name
-                                kind
-                                ofType {
-                                    name
-                                    kind
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     subscriptionType {
                         name
                         description
                         fields {
-                            name
-                            description
-                            args {
-                                name
-                                description
-                                type {
-                                    name
-                                    kind
-                                    ofType {
-                                        name
-                                        kind
-                                    }
-                                }
-                            }
+                            ...FieldInfo
                         }
                     }
                     types {
@@ -223,11 +168,54 @@ impl GraphQLAdapter {
                             name
                             description
                             type {
-                                name
+                                ...TypeRef
+                            }
+                        }
+                    }
+                }
+            }
+
+            fragment FieldInfo on __Field {
+                name
+                description
+                args {
+                    name
+                    description
+                    type {
+                        ...TypeRef
+                    }
+                }
+                type {
+                    ...TypeRef
+                }
+            }
+
+            fragment TypeRef on __Type {
+                kind
+                name
+                ofType {
+                    kind
+                    name
+                    ofType {
+                        kind
+                        name
+                        ofType {
+                            kind
+                            name
+                            ofType {
                                 kind
+                                name
                                 ofType {
-                                    name
                                     kind
+                                    name
+                                    ofType {
+                                        kind
+                                        name
+                                        ofType {
+                                            kind
+                                            name
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1034,6 +1022,13 @@ mod tests {
 
         let mutation = GraphQLAdapter::build_query(OperationType::Mutation, "addStar", None);
         assert_eq!(mutation, "mutation { addStar }");
+    }
+
+    #[test]
+    fn test_introspection_query_includes_deep_type_ref_fragment() {
+        let query = GraphQLAdapter::get_introspection_query();
+        assert!(query.contains("fragment TypeRef on __Type"));
+        assert!(query.matches("ofType").count() >= 6);
     }
 
     #[test]

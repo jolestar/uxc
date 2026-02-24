@@ -50,7 +50,7 @@ struct CachedReflectionData {
 struct ServiceInfo {
     methods: HashMap<String, MethodInfo>,
     #[allow(dead_code)]
-    file_descriptor: FileDescriptorProto,
+    file_descriptors: Vec<FileDescriptorProto>,
 }
 
 /// Information about a gRPC method
@@ -205,12 +205,28 @@ impl GrpcAdapter {
         Ok(services)
     }
 
-    /// Get file descriptor for a service
-    async fn get_service_descriptor(
+    fn descriptor_contains_service(
+        descriptor: &FileDescriptorProto,
+        full_service_name: &str,
+    ) -> bool {
+        let package = descriptor.package.clone().unwrap_or_default();
+        descriptor.service.iter().any(|service| {
+            let service_name = service.name.clone().unwrap_or_default();
+            let candidate = if package.is_empty() {
+                service_name
+            } else {
+                format!("{}.{}", package, service_name)
+            };
+            candidate == full_service_name
+        })
+    }
+
+    /// Get file descriptors for a service symbol.
+    async fn get_service_descriptors(
         &self,
         endpoint: &Endpoint,
         service_name: &str,
-    ) -> Result<FileDescriptorProto> {
+    ) -> Result<Vec<FileDescriptorProto>> {
         let channel = endpoint.connect().await?;
         let mut client = reflection::server_reflection_client::ServerReflectionClient::new(channel)
             .max_decoding_message_size(usize::MAX);
@@ -239,23 +255,31 @@ impl GrpcAdapter {
                 reflection::server_reflection_response::MessageResponse::FileDescriptorResponse(fd),
             ) = response.message_response
             {
-                if let Some(descriptor_bytes) = fd.file_descriptor_proto.first() {
+                let mut descriptors = Vec::new();
+                for descriptor_bytes in fd.file_descriptor_proto {
                     let descriptor = FileDescriptorProto::decode(descriptor_bytes.as_slice())
                         .context("Failed to decode file descriptor")?;
-                    return Ok(descriptor);
+                    descriptors.push(descriptor);
+                }
+                if !descriptors.is_empty() {
+                    return Ok(descriptors);
                 }
             }
         }
 
-        bail!("File descriptor not found for service: {}", service_name)
+        bail!("File descriptors not found for service: {}", service_name)
     }
 
     /// Parse service and methods from file descriptor
-    fn parse_service_info(&self, descriptor: &FileDescriptorProto) -> Result<ServiceInfo> {
+    fn parse_service_info(
+        &self,
+        service_descriptor: &FileDescriptorProto,
+        all_descriptors: Vec<FileDescriptorProto>,
+    ) -> Result<ServiceInfo> {
         let mut methods = HashMap::new();
-        let package = descriptor.package.clone().unwrap_or_default();
+        let package = service_descriptor.package.clone().unwrap_or_default();
 
-        for service in &descriptor.service {
+        for service in &service_descriptor.service {
             let service_name = service.name.clone().unwrap_or_default();
             let full_service_name = if package.is_empty() {
                 service_name
@@ -279,7 +303,7 @@ impl GrpcAdapter {
 
         Ok(ServiceInfo {
             methods,
-            file_descriptor: descriptor.clone(),
+            file_descriptors: all_descriptors,
         })
     }
 
@@ -304,10 +328,25 @@ impl GrpcAdapter {
                 continue;
             }
 
-            match self.get_service_descriptor(&endpoint, &service_name).await {
-                Ok(descriptor) => {
-                    if let Ok(info) = self.parse_service_info(&descriptor) {
-                        services.insert(service_name.clone(), info);
+            match self.get_service_descriptors(&endpoint, &service_name).await {
+                Ok(descriptors) => {
+                    let service_descriptor = descriptors
+                        .iter()
+                        .find(|descriptor| {
+                            Self::descriptor_contains_service(descriptor, &service_name)
+                        })
+                        .cloned()
+                        .or_else(|| descriptors.first().cloned());
+
+                    if let Some(descriptor) = service_descriptor {
+                        if let Ok(info) = self.parse_service_info(&descriptor, descriptors) {
+                            services.insert(service_name.clone(), info);
+                        }
+                    } else {
+                        tracing::warn!(
+                            "No descriptor payload returned for service symbol {}",
+                            service_name
+                        );
                     }
                 }
                 Err(e) => {
@@ -351,7 +390,7 @@ impl GrpcAdapter {
         &self,
         url: &str,
         operation: &str,
-    ) -> Result<(MethodInfo, FileDescriptorProto)> {
+    ) -> Result<(MethodInfo, Vec<FileDescriptorProto>)> {
         let (service_name, method_name) = operation.split_once('/').ok_or_else(|| {
             UxcError::InvalidArguments(format!(
                 "Invalid operation ID format: {}. Use ServiceName/MethodName",
@@ -376,7 +415,7 @@ impl GrpcAdapter {
             .get(method_name)
             .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
-        Ok((method_info.clone(), service_info.file_descriptor.clone()))
+        Ok((method_info.clone(), service_info.file_descriptors.clone()))
     }
 
     fn normalize_type_name(type_name: &str) -> String {
@@ -422,29 +461,31 @@ impl GrpcAdapter {
     }
 
     fn build_descriptor_indexes(
-        descriptor: &FileDescriptorProto,
+        descriptors: &[FileDescriptorProto],
     ) -> (
         HashMap<String, DescriptorProto>,
         HashMap<String, EnumDescriptorProto>,
     ) {
         let mut message_index = HashMap::new();
         let mut enum_index = HashMap::new();
-        let package_prefix = descriptor.package.clone().unwrap_or_default();
 
-        Self::collect_message_descriptors(
-            &package_prefix,
-            &descriptor.message_type,
-            &mut message_index,
-            &mut enum_index,
-        );
-        for enum_type in &descriptor.enum_type {
-            if let Some(name) = enum_type.name.clone() {
-                let full_name = if package_prefix.is_empty() {
-                    name
-                } else {
-                    format!("{}.{}", package_prefix, name)
-                };
-                enum_index.insert(full_name, enum_type.clone());
+        for descriptor in descriptors {
+            let package_prefix = descriptor.package.clone().unwrap_or_default();
+            Self::collect_message_descriptors(
+                &package_prefix,
+                &descriptor.message_type,
+                &mut message_index,
+                &mut enum_index,
+            );
+            for enum_type in &descriptor.enum_type {
+                if let Some(name) = enum_type.name.clone() {
+                    let full_name = if package_prefix.is_empty() {
+                        name
+                    } else {
+                        format!("{}.{}", package_prefix, name)
+                    };
+                    enum_index.insert(full_name, enum_type.clone());
+                }
             }
         }
 
@@ -461,10 +502,15 @@ impl GrpcAdapter {
         }
 
         let short_name = normalized.rsplit('.').next().unwrap_or(&normalized);
-        message_index.iter().find_map(|(name, descriptor)| {
-            name.ends_with(&format!(".{}", short_name))
-                .then_some(descriptor)
-        })
+        let mut matches = message_index
+            .iter()
+            .filter(|(name, _)| name.ends_with(&format!(".{}", short_name)))
+            .map(|(_, descriptor)| descriptor);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
     }
 
     fn find_enum_descriptor<'a>(
@@ -477,10 +523,15 @@ impl GrpcAdapter {
         }
 
         let short_name = normalized.rsplit('.').next().unwrap_or(&normalized);
-        enum_index.iter().find_map(|(name, descriptor)| {
-            name.ends_with(&format!(".{}", short_name))
-                .then_some(descriptor)
-        })
+        let mut matches = enum_index
+            .iter()
+            .filter(|(name, _)| name.ends_with(&format!(".{}", short_name)))
+            .map(|(_, descriptor)| descriptor);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
     }
 
     fn field_schema(
@@ -613,8 +664,11 @@ impl GrpcAdapter {
         Value::Object(message_schema)
     }
 
-    fn build_operation_input_schema(descriptor: &FileDescriptorProto, input_type: &str) -> Value {
-        let (message_index, enum_index) = Self::build_descriptor_indexes(descriptor);
+    fn build_operation_input_schema(
+        descriptors: &[FileDescriptorProto],
+        input_type: &str,
+    ) -> Value {
+        let (message_index, enum_index) = Self::build_descriptor_indexes(descriptors);
         serde_json::json!({
             "kind": "grpc_message",
             "message_type": Self::normalize_type_name(input_type),
@@ -873,7 +927,7 @@ impl Adapter for GrpcAdapter {
     }
 
     async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
-        let (method_info, descriptor) = self.find_method_context(url, operation).await?;
+        let (method_info, descriptors) = self.find_method_context(url, operation).await?;
         let stream_type = match (
             method_info.is_client_streaming,
             method_info.is_server_streaming,
@@ -897,7 +951,10 @@ impl Adapter for GrpcAdapter {
                 description: Some(format!("gRPC request payload ({})", stream_type)),
             }],
             return_type: Some(output_type),
-            input_schema: Some(Self::build_operation_input_schema(&descriptor, &input_type)),
+            input_schema: Some(Self::build_operation_input_schema(
+                &descriptors,
+                &input_type,
+            )),
         })
     }
 
@@ -1087,8 +1144,10 @@ mod tests {
             ..Default::default()
         };
 
-        let input_schema =
-            GrpcAdapter::build_operation_input_schema(&descriptor, ".example.Request");
+        let input_schema = GrpcAdapter::build_operation_input_schema(
+            std::slice::from_ref(&descriptor),
+            ".example.Request",
+        );
         assert_eq!(input_schema["kind"], "grpc_message");
         assert_eq!(input_schema["message_type"], "example.Request");
         assert_eq!(input_schema["schema"]["properties"]["id"]["type"], "string");
@@ -1103,6 +1162,86 @@ mod tests {
         assert_eq!(
             input_schema["schema"]["properties"]["status"]["enum"][0],
             "ACTIVE"
+        );
+    }
+
+    #[test]
+    fn test_short_name_lookup_returns_none_when_ambiguous() {
+        let mut message_index = HashMap::new();
+        message_index.insert(
+            "pkg1.User".to_string(),
+            DescriptorProto {
+                name: Some("User".to_string()),
+                ..Default::default()
+            },
+        );
+        message_index.insert(
+            "pkg2.User".to_string(),
+            DescriptorProto {
+                name: Some("User".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(GrpcAdapter::find_message_descriptor(&message_index, ".other.User").is_none());
+
+        let mut enum_index = HashMap::new();
+        enum_index.insert(
+            "pkg1.Status".to_string(),
+            EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                ..Default::default()
+            },
+        );
+        enum_index.insert(
+            "pkg2.Status".to_string(),
+            EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(GrpcAdapter::find_enum_descriptor(&enum_index, ".other.Status").is_none());
+    }
+
+    #[test]
+    fn test_build_operation_input_schema_uses_types_from_multiple_descriptors() {
+        let service_descriptor = FileDescriptorProto {
+            package: Some("service".to_string()),
+            service: vec![prost_types::ServiceDescriptorProto {
+                name: Some("Echo".to_string()),
+                method: vec![prost_types::MethodDescriptorProto {
+                    name: Some("Call".to_string()),
+                    input_type: Some(".dep.Request".to_string()),
+                    output_type: Some(".dep.Response".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let dependency_descriptor = FileDescriptorProto {
+            package: Some("dep".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Request".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("name".to_string()),
+                    json_name: Some("name".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional as i32),
+                    r#type: Some(Type::String as i32),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let input_schema = GrpcAdapter::build_operation_input_schema(
+            &[service_descriptor, dependency_descriptor],
+            ".dep.Request",
+        );
+        assert_eq!(
+            input_schema["schema"]["properties"]["name"]["type"],
+            "string"
         );
     }
 }

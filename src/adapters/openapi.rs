@@ -365,6 +365,9 @@ impl OpenAPIAdapter {
             }
             content_map.insert(media_type.clone(), Value::Object(media_obj));
         }
+        if content_map.is_empty() {
+            return None;
+        }
 
         let mut body = Map::new();
         body.insert(
@@ -725,5 +728,45 @@ mod tests {
                 ["properties"]["id"]["type"],
             "integer"
         );
+    }
+
+    #[tokio::test]
+    async fn describe_operation_omits_input_schema_when_request_body_has_no_schema() {
+        let mut server = mockito::Server::new_async().await;
+        let _openapi = server
+            .mock("GET", "/openapi.json")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "Test", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "post": {
+        "summary": "Add a new pet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": { "name": "doggie" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAPIAdapter::new();
+        let detail = adapter
+            .describe_operation(&server.url(), "post:/pet")
+            .await
+            .unwrap();
+        assert!(detail.input_schema.is_none());
     }
 }
