@@ -70,11 +70,10 @@ fn list_operations_from_rpc_discover() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["protocol"], "jsonrpc");
     assert_eq!(json["kind"], "operation_list");
-    assert!(json["data"]["operations"]
-        .as_array()
-        .unwrap_or(&Vec::new())
-        .iter()
-        .any(|op| op["operation_id"] == "subtract" && op["protocol_kind"] == "rpc_method"));
+    assert!(json["data"]["operations"].as_array().is_some_and(|ops| {
+        ops.iter()
+            .any(|op| op["operation_id"] == "subtract" && op["protocol_kind"] == "rpc_method")
+    }));
 }
 
 #[test]

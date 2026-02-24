@@ -140,18 +140,17 @@ impl JsonRpcAdapter {
     }
 
     fn parse_return_type(method: &Value) -> Option<String> {
-        if let Some(name) = method
-            .get("result")
-            .and_then(|result| result.get("name"))
-            .and_then(|v| v.as_str())
-        {
+        let result = method.get("result")?;
+
+        if let Some(schema) = result.get("schema") {
+            return Some(Self::schema_type_hint(schema));
+        }
+
+        if let Some(name) = result.get("name").and_then(|v| v.as_str()) {
             return Some(name.to_string());
         }
 
-        method
-            .get("result")
-            .and_then(|result| result.get("schema"))
-            .map(Self::schema_type_hint)
+        Some("unknown".to_string())
     }
 
     fn method_description(method: &Value) -> Option<String> {
