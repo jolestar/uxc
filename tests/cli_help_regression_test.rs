@@ -512,6 +512,7 @@ fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
 
     let mapping_file_dir = tempfile::tempdir().expect("failed to create tempdir");
     let mapping_file_path = mapping_file_dir.path().join("schema_mappings.json");
+    let schema_url = format!("{}/schema.json", schema_server.url());
     std::fs::write(
         &mapping_file_path,
         format!(
@@ -526,7 +527,7 @@ fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
     }}
   ]
 }}"#,
-            schema_url = format!("{}/schema.json", schema_server.url())
+            schema_url = schema_url
         ),
     )
     .expect("failed to write schema mapping file");
