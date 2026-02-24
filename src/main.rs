@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::info;
@@ -203,7 +204,7 @@ enum EndpointCommand {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct OperationSummary {
     operation_id: String,
     display_name: String,
@@ -211,6 +212,60 @@ struct OperationSummary {
     required: Vec<String>,
     input_shape_hint: String,
     protocol_kind: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct HostHelpData {
+    operations: Vec<OperationSummary>,
+    count: usize,
+    next: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OperationListData {
+    operations: Vec<OperationSummary>,
+    count: usize,
+    verbose: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GlobalHelpData {
+    name: String,
+    about: String,
+    usage: String,
+    commands: Vec<GlobalHelpCommand>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GlobalHelpCommand {
+    name: String,
+    about: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CacheClearData {
+    scope: String,
+    url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthProfileView {
+    name: String,
+    auth_type: String,
+    api_key_masked: String,
+    description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthListData {
+    profiles: Vec<AuthProfileView>,
+    count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AuthRemoveData {
+    profile: String,
 }
 
 #[tokio::main]
@@ -223,35 +278,117 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    if let Err(err) = run().await {
-        if prefers_text_output() {
-            eprintln!("{}", err);
-        } else {
-            let code = error_code(&err);
-            let envelope = OutputEnvelope::error(code, &err.to_string());
-            match envelope.to_json() {
-                Ok(json) => println!("{}", json),
-                Err(ser_err) => {
-                    eprintln!("failed to serialize error output: {}", ser_err);
-                    eprintln!("{}", err);
-                }
-            }
-        }
+    let normalized_args = normalize_global_args(std::env::args().collect());
+    let fallback_output_mode = output_mode_from_args(&normalized_args);
+
+    if let Err(err) = run(normalized_args).await {
+        render_error(&err, fallback_output_mode);
         std::process::exit(1);
     }
 }
 
-async fn run() -> Result<()> {
-    let cli = Cli::parse();
-    let output_mode = if cli.text || cli.format == Some(OutputFormat::Text) {
+fn render_error(err: &anyhow::Error, output_mode: OutputMode) {
+    if output_mode == OutputMode::Text {
+        eprintln!("{}", err);
+        return;
+    }
+
+    let code = error_code(err);
+    let envelope = OutputEnvelope::error(code, &err.to_string());
+    match envelope.to_json() {
+        Ok(json) => println!("{}", json),
+        Err(ser_err) => {
+            eprintln!("failed to serialize error output: {}", ser_err);
+            eprintln!("{}", err);
+        }
+    }
+}
+
+async fn run(args: Vec<String>) -> Result<()> {
+    let cli = Cli::parse_from(args);
+    let output_mode = resolve_output_mode(&cli);
+    let envelope = execute_cli(&cli).await?;
+    render_output(&envelope, output_mode)
+}
+
+fn resolve_output_mode(cli: &Cli) -> OutputMode {
+    if cli.text || cli.format == Some(OutputFormat::Text) {
+        OutputMode::Text
+    } else if cli.help && cli.url.is_none() && cli.command.is_none() {
+        // Preserve classic `uxc -h/--help` text UX.
         OutputMode::Text
     } else {
         OutputMode::Json
-    };
+    }
+}
 
-    if should_show_global_help(&cli) {
-        print_global_help()?;
-        return Ok(());
+fn output_mode_from_args(args: &[String]) -> OutputMode {
+    if args.iter().any(|arg| arg == "--text") {
+        return OutputMode::Text;
+    }
+
+    for (idx, arg) in args.iter().enumerate() {
+        if arg == "--format" {
+            if let Some(value) = args.get(idx + 1) {
+                if value == "text" {
+                    return OutputMode::Text;
+                }
+            }
+        } else if arg == "--format=text" {
+            return OutputMode::Text;
+        }
+    }
+
+    OutputMode::Json
+}
+
+fn normalize_global_args(raw_args: Vec<String>) -> Vec<String> {
+    if raw_args.len() <= 1 {
+        return raw_args;
+    }
+
+    let mut normalized = vec![raw_args[0].clone()];
+    let mut global_args = Vec::new();
+    let mut rest_args = Vec::new();
+    let mut idx = 1;
+
+    while idx < raw_args.len() {
+        let arg = &raw_args[idx];
+        let is_global_bool = matches!(arg.as_str(), "--text" | "--no-cache");
+        let is_global_kv = matches!(arg.as_str(), "--format" | "--profile" | "--cache-ttl");
+        let is_global_inline = arg.starts_with("--format=")
+            || arg.starts_with("--profile=")
+            || arg.starts_with("--cache-ttl=");
+
+        if is_global_bool || is_global_inline {
+            global_args.push(arg.clone());
+            idx += 1;
+            continue;
+        }
+
+        if is_global_kv {
+            global_args.push(arg.clone());
+            if let Some(value) = raw_args.get(idx + 1) {
+                global_args.push(value.clone());
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
+        rest_args.push(arg.clone());
+        idx += 1;
+    }
+
+    normalized.extend(global_args);
+    normalized.extend(rest_args);
+    normalized
+}
+
+async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
+    if should_show_global_help(cli) {
+        return global_help_envelope();
     }
 
     let cache_config = if cli.no_cache {
@@ -283,8 +420,8 @@ async fn run() -> Result<()> {
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
-    let endpoint_command = resolve_endpoint_command(&cli)?;
-    let auth_profile = load_auth_profile(cli.profile)?;
+    let endpoint_command = resolve_endpoint_command(cli)?;
+    let auth_profile = load_auth_profile(cli.profile.clone())?;
     let cache = cache::create_cache(cache_config)?;
 
     let detector = ProtocolDetector::new();
@@ -292,82 +429,64 @@ async fn run() -> Result<()> {
     adapter = inject_cache_if_supported(adapter, cache);
     adapter = inject_auth_if_supported(adapter, auth_profile);
 
-    match endpoint_command {
+    let envelope = match endpoint_command {
         EndpointCommand::HostHelp => {
             let start = std::time::Instant::now();
             let operations = adapter.list_operations(&url).await?;
             let protocol = adapter.protocol_type().as_str();
             let duration_ms = start.elapsed().as_millis() as u64;
-
-            if output_mode == OutputMode::Json {
-                let summaries = operations
-                    .iter()
-                    .map(|op| to_operation_summary(protocol, op))
-                    .collect::<Vec<_>>();
-                let data = json!({
-                    "operations": summaries,
-                    "count": summaries.len(),
-                    "next": [
-                        "uxc <host> list",
-                        "uxc <host> describe <operation_id>",
-                        "uxc <host> call <operation_id> --json '{...}'"
-                    ]
-                });
-                print_json(OutputEnvelope::success(
-                    "host_help",
-                    protocol,
-                    &url,
-                    None,
-                    data,
-                    Some(duration_ms),
-                ))?;
-            } else {
-                print_host_help_text(protocol, &url, &operations);
-            }
+            let summaries = operations
+                .iter()
+                .map(|op| to_operation_summary(protocol, op))
+                .collect::<Vec<_>>();
+            let data = serde_json::to_value(HostHelpData {
+                count: summaries.len(),
+                operations: summaries,
+                next: vec![
+                    "uxc <host> list".to_string(),
+                    "uxc <host> describe <operation_id>".to_string(),
+                    "uxc <host> call <operation_id> --json '{...}'".to_string(),
+                ],
+            })?;
+            OutputEnvelope::success("host_help", protocol, &url, None, data, Some(duration_ms))
         }
         EndpointCommand::List { verbose } => {
             let start = std::time::Instant::now();
             let operations = adapter.list_operations(&url).await?;
             let protocol = adapter.protocol_type().as_str();
             let duration_ms = start.elapsed().as_millis() as u64;
-
-            if output_mode == OutputMode::Json {
-                let summaries = operations
-                    .iter()
-                    .map(|op| to_operation_summary(protocol, op))
-                    .collect::<Vec<_>>();
-                let data = json!({"operations": summaries, "count": summaries.len()});
-                print_json(OutputEnvelope::success(
-                    "operation_list",
-                    protocol,
-                    &url,
-                    None,
-                    data,
-                    Some(duration_ms),
-                ))?;
-            } else {
-                print_list_text(protocol, &operations, verbose);
-            }
+            let summaries = operations
+                .iter()
+                .map(|op| to_operation_summary(protocol, op))
+                .collect::<Vec<_>>();
+            let data = serde_json::to_value(OperationListData {
+                count: summaries.len(),
+                operations: summaries,
+                verbose,
+            })?;
+            OutputEnvelope::success(
+                "operation_list",
+                protocol,
+                &url,
+                None,
+                data,
+                Some(duration_ms),
+            )
         }
         EndpointCommand::Describe { operation_id } => {
             let start = std::time::Instant::now();
             let detail = adapter.describe_operation(&url, &operation_id).await?;
             let protocol = adapter.protocol_type().as_str();
             let duration_ms = start.elapsed().as_millis() as u64;
-
-            if output_mode == OutputMode::Json {
-                let data = serde_json::to_value(&detail)?;
-                print_json(OutputEnvelope::success(
-                    "operation_detail",
-                    protocol,
-                    &url,
-                    Some(&detail.operation_id),
-                    data,
-                    Some(duration_ms),
-                ))?;
-            } else {
-                print_detail_text(protocol, &url, &detail);
-            }
+            let data = serde_json::to_value(&detail)?;
+            OutputEnvelope::success(
+                "operation_detail",
+                protocol,
+                &url,
+                Some(&detail.operation_id),
+                data,
+                Some(duration_ms),
+            )
         }
         EndpointCommand::Inspect { full } => {
             let start = std::time::Instant::now();
@@ -378,28 +497,19 @@ async fn run() -> Result<()> {
                 None
             };
             let duration_ms = start.elapsed().as_millis() as u64;
-
-            if output_mode == OutputMode::Json {
-                let data = json!({
-                    "protocol": protocol,
-                    "endpoint": url,
-                    "schema": schema,
-                });
-                print_json(OutputEnvelope::success(
-                    "inspect_result",
-                    protocol,
-                    &url,
-                    None,
-                    data,
-                    Some(duration_ms),
-                ))?;
-            } else {
-                println!("Protocol: {}", protocol);
-                println!("Endpoint: {}", url);
-                if let Some(schema) = schema {
-                    println!("\nSchema:\n{}", serde_json::to_string_pretty(&schema)?);
-                }
-            }
+            let data = json!({
+                "protocol": protocol,
+                "endpoint": url,
+                "schema": schema,
+            });
+            OutputEnvelope::success(
+                "inspect_result",
+                protocol,
+                &url,
+                None,
+                data,
+                Some(duration_ms),
+            )
         }
         EndpointCommand::Execute {
             operation_id,
@@ -409,31 +519,29 @@ async fn run() -> Result<()> {
             let args_map = parse_arguments(args, json)?;
             let result = adapter.execute(&url, &operation_id, args_map).await?;
             let protocol = adapter.protocol_type().as_str();
-
-            if output_mode == OutputMode::Json {
-                print_json(OutputEnvelope::success(
-                    "call_result",
-                    protocol,
-                    &url,
-                    Some(&operation_id),
-                    result.data,
-                    Some(result.metadata.duration_ms),
-                ))?;
-            } else {
-                println!("{}", serde_json::to_string_pretty(&result.data)?);
-            }
+            OutputEnvelope::success(
+                "call_result",
+                protocol,
+                &url,
+                Some(&operation_id),
+                result.data,
+                Some(result.metadata.duration_ms),
+            )
         }
-    }
+    };
 
-    Ok(())
+    Ok(envelope)
 }
 
 fn should_show_global_help(cli: &Cli) -> bool {
-    if cli.help && cli.url.is_none() && cli.command.is_none() {
-        return true;
+    if cli.url.is_some() {
+        return false;
     }
 
-    matches!(cli.command, Some(Commands::Help { operation_id: None })) && cli.url.is_none()
+    matches!(
+        cli.command,
+        None | Some(Commands::Help { operation_id: None })
+    )
 }
 
 fn print_global_help() -> Result<()> {
@@ -441,6 +549,180 @@ fn print_global_help() -> Result<()> {
     cmd.print_help()?;
     println!();
     Ok(())
+}
+
+fn global_help_envelope() -> Result<OutputEnvelope> {
+    let data = serde_json::to_value(GlobalHelpData {
+        name: "uxc".to_string(),
+        about: "Universal X-Protocol Call".to_string(),
+        usage: "uxc [OPTIONS] [URL] [COMMAND]".to_string(),
+        commands: vec![
+            GlobalHelpCommand {
+                name: "list".to_string(),
+                about: "List available operations".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "describe".to_string(),
+                about: "Describe one operation in detail".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "help".to_string(),
+                about: "Show endpoint help, or operation help with OPERATION_ID".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "inspect".to_string(),
+                about: "Inspect endpoint/schema".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "cache".to_string(),
+                about: "Manage schema cache".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "auth".to_string(),
+                about: "Manage authentication profiles".to_string(),
+            },
+            GlobalHelpCommand {
+                name: "call".to_string(),
+                about: "Execute an operation explicitly".to_string(),
+            },
+        ],
+        notes: vec![
+            "Default output is JSON. Use --text for human-readable output.".to_string(),
+            "Examples: uxc <host> help; uxc <host> <operation> help".to_string(),
+        ],
+    })?;
+
+    Ok(OutputEnvelope::success(
+        "global_help",
+        "cli",
+        "uxc",
+        None,
+        data,
+        None,
+    ))
+}
+
+fn render_output(envelope: &OutputEnvelope, output_mode: OutputMode) -> Result<()> {
+    match output_mode {
+        OutputMode::Json => print_json(envelope.clone()),
+        OutputMode::Text => render_text_output(envelope),
+    }
+}
+
+fn render_text_output(envelope: &OutputEnvelope) -> Result<()> {
+    if !envelope.ok {
+        if let Some(err) = &envelope.error {
+            println!("{}", err.message);
+        }
+        return Ok(());
+    }
+
+    match envelope.kind.as_deref() {
+        Some("global_help") => print_global_help(),
+        Some("host_help") => {
+            let endpoint = envelope.endpoint.as_deref().unwrap_or("unknown");
+            let protocol = envelope.protocol.as_deref().unwrap_or("unknown");
+            let data: HostHelpData = decode_envelope_data(envelope)?;
+            print_host_help_text_from_summaries(protocol, endpoint, &data.operations, &data.next);
+            Ok(())
+        }
+        Some("operation_list") => {
+            let protocol = envelope.protocol.as_deref().unwrap_or("unknown");
+            let data: OperationListData = decode_envelope_data(envelope)?;
+            print_list_text_from_summaries(protocol, &data.operations, data.verbose);
+            Ok(())
+        }
+        Some("operation_detail") => {
+            let endpoint = envelope.endpoint.as_deref().unwrap_or("unknown");
+            let protocol = envelope.protocol.as_deref().unwrap_or("unknown");
+            let detail: OperationDetail = decode_envelope_data(envelope)?;
+            print_detail_text(protocol, endpoint, &detail);
+            Ok(())
+        }
+        Some("inspect_result") => {
+            let protocol = envelope.protocol.as_deref().unwrap_or("unknown");
+            let endpoint = envelope.endpoint.as_deref().unwrap_or("unknown");
+            let data = envelope.data.clone().unwrap_or(Value::Null);
+            println!("Protocol: {}", protocol);
+            println!("Endpoint: {}", endpoint);
+            if let Some(schema) = data.get("schema").filter(|v| !v.is_null()) {
+                println!("\nSchema:\n{}", serde_json::to_string_pretty(schema)?);
+            }
+            Ok(())
+        }
+        Some("call_result") => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope.data.clone().unwrap_or(Value::Null))?
+            );
+            Ok(())
+        }
+        Some("cache_stats") => {
+            let stats: cache::CacheStats = decode_envelope_data(envelope)?;
+            println!("{}", stats.display());
+            Ok(())
+        }
+        Some("cache_clear_result") => {
+            let data: CacheClearData = decode_envelope_data(envelope)?;
+            if data.scope == "all" {
+                println!("Cache cleared successfully.");
+            } else if let Some(url) = data.url {
+                println!("Cache entry cleared for: {}", url);
+            } else {
+                println!("Cache cleared.");
+            }
+            Ok(())
+        }
+        Some("auth_list") => {
+            let data: AuthListData = decode_envelope_data(envelope)?;
+            if data.profiles.is_empty() {
+                println!("No profiles found.");
+                println!("\nCreate a profile with: uxc auth set <profile> --api-key <key>");
+                return Ok(());
+            }
+
+            println!("Authentication Profiles:\n");
+            for profile in data.profiles {
+                println!("  {}", profile.name);
+                println!("    Type: {}", profile.auth_type);
+                println!("    API Key: {}", profile.api_key_masked);
+                if let Some(desc) = profile.description {
+                    println!("    Description: {}", desc);
+                }
+                println!();
+            }
+            Ok(())
+        }
+        Some("auth_info") | Some("auth_set_result") => {
+            let profile: AuthProfileView = decode_envelope_data(envelope)?;
+            println!("Profile: {}", profile.name);
+            println!("  Type: {}", profile.auth_type);
+            println!("  API Key: {}", profile.api_key_masked);
+            if let Some(desc) = profile.description {
+                println!("  Description: {}", desc);
+            }
+            Ok(())
+        }
+        Some("auth_remove_result") => {
+            let data: AuthRemoveData = decode_envelope_data(envelope)?;
+            println!("Profile '{}' removed successfully.", data.profile);
+            Ok(())
+        }
+        _ => {
+            if let Some(data) = &envelope.data {
+                println!("{}", serde_json::to_string_pretty(data)?);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn decode_envelope_data<T: DeserializeOwned>(envelope: &OutputEnvelope) -> Result<T> {
+    let value = envelope
+        .data
+        .clone()
+        .ok_or_else(|| UxcError::GenericError(anyhow::anyhow!("Envelope data is missing")))?;
+    Ok(serde_json::from_value(value)?)
 }
 
 fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
@@ -615,47 +897,46 @@ fn print_json(envelope: OutputEnvelope) -> Result<()> {
     Ok(())
 }
 
-fn print_host_help_text(protocol: &str, endpoint: &str, operations: &[Operation]) {
+fn print_host_help_text_from_summaries(
+    protocol: &str,
+    endpoint: &str,
+    operations: &[OperationSummary],
+    next: &[String],
+) {
     println!("Protocol: {}", protocol);
     println!("Endpoint: {}", endpoint);
     println!();
     println!("Available operations:");
     for op in operations {
-        if let Some(desc) = &op.description {
+        if let Some(desc) = &op.summary {
             println!("- {} ({}) : {}", op.display_name, op.operation_id, desc);
         } else {
             println!("- {} ({})", op.display_name, op.operation_id);
         }
     }
-    println!();
-    println!("Next steps:");
-    println!("  uxc {} list", endpoint);
-    println!("  uxc {} describe <operation_id>", endpoint);
-    println!("  uxc {} call <operation_id> --json '{{...}}'", endpoint);
+
+    if !next.is_empty() {
+        println!();
+        println!("Next steps:");
+        for line in next {
+            println!("  {}", line);
+        }
+    }
 }
 
-fn print_list_text(protocol: &str, operations: &[Operation], verbose: bool) {
+fn print_list_text_from_summaries(protocol: &str, operations: &[OperationSummary], verbose: bool) {
     if verbose {
         println!("Detected protocol: {}", protocol);
         println!();
     }
-
     for op in operations {
         println!("{} ({})", op.display_name, op.operation_id);
         if verbose {
-            if let Some(desc) = &op.description {
+            if let Some(desc) = &op.summary {
                 println!("  {}", desc);
             }
-            if !op.parameters.is_empty() {
-                println!("  Parameters:");
-                for param in &op.parameters {
-                    println!(
-                        "    - {} ({}){}",
-                        param.name,
-                        param.param_type,
-                        if param.required { " required" } else { "" }
-                    );
-                }
+            if !op.required.is_empty() {
+                println!("  Required: {}", op.required.join(", "));
             }
         }
     }
@@ -768,86 +1049,98 @@ fn error_code(err: &anyhow::Error) -> &'static str {
     "EXECUTION_FAILED"
 }
 
-fn prefers_text_output() -> bool {
-    let args = std::env::args().collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "--text") {
-        return true;
-    }
-
-    for (idx, arg) in args.iter().enumerate() {
-        if arg == "--format" {
-            if let Some(value) = args.get(idx + 1) {
-                if value == "text" {
-                    return true;
-                }
-            }
-        } else if arg == "--format=text" {
-            return true;
-        }
-    }
-
-    false
-}
-
-async fn handle_cache_command(command: &CacheCommands, cache_config: CacheConfig) -> Result<()> {
+async fn handle_cache_command(
+    command: &CacheCommands,
+    cache_config: CacheConfig,
+) -> Result<OutputEnvelope> {
     let cache = cache::create_cache(cache_config)?;
 
     match command {
         CacheCommands::Stats => {
             let stats = cache.stats()?;
-            println!("{}", stats.display());
+            let data = serde_json::to_value(stats)?;
+            Ok(OutputEnvelope::success(
+                "cache_stats",
+                "cli",
+                "uxc",
+                None,
+                data,
+                None,
+            ))
         }
         CacheCommands::Clear { url, all } => {
             if *all {
                 cache.clear()?;
-                println!("Cache cleared successfully.");
+                let data = serde_json::to_value(CacheClearData {
+                    scope: "all".to_string(),
+                    url: None,
+                })?;
+                Ok(OutputEnvelope::success(
+                    "cache_clear_result",
+                    "cli",
+                    "uxc",
+                    None,
+                    data,
+                    None,
+                ))
             } else if let Some(url) = url {
                 cache.invalidate(url)?;
-                println!("Cache entry cleared for: {}", url);
+                let data = serde_json::to_value(CacheClearData {
+                    scope: "url".to_string(),
+                    url: Some(url.clone()),
+                })?;
+                Ok(OutputEnvelope::success(
+                    "cache_clear_result",
+                    "cli",
+                    "uxc",
+                    None,
+                    data,
+                    None,
+                ))
             } else {
-                println!("Usage: uxc cache clear <url> OR uxc cache clear --all");
+                Err(UxcError::InvalidArguments(
+                    "Usage: uxc cache clear <url> OR uxc cache clear --all".to_string(),
+                )
+                .into())
             }
         }
     }
-
-    Ok(())
 }
 
-async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
+async fn handle_auth_command(command: &AuthCommands) -> Result<OutputEnvelope> {
     match command {
         AuthCommands::List => {
             let profiles = Profiles::load_profiles()?;
-
-            if profiles.count() == 0 {
-                println!("No profiles found.");
-                println!("\nCreate a profile with: uxc auth set <profile> --api-key <key>");
-                return Ok(());
-            }
-
-            println!("Authentication Profiles:");
-            println!();
-
+            let mut rendered = Vec::new();
             for name in profiles.profile_names() {
                 let profile = profiles.get_profile(&name)?;
-                println!("  {}", name);
-                println!("    Type: {}", profile.auth_type);
-                println!("    API Key: {}", profile.mask_api_key());
-                if let Some(desc) = &profile.description {
-                    println!("    Description: {}", desc);
-                }
-                println!();
+                rendered.push(to_auth_profile_view(&name, profile));
             }
+            let data = serde_json::to_value(AuthListData {
+                count: rendered.len(),
+                profiles: rendered,
+            })?;
+            Ok(OutputEnvelope::success(
+                "auth_list",
+                "cli",
+                "uxc",
+                None,
+                data,
+                None,
+            ))
         }
         AuthCommands::Info { profile } => {
             let profiles = Profiles::load_profiles()?;
             let profile_data = profiles.get_profile(profile)?;
-
-            println!("Profile: {}", profile);
-            println!("  Type: {}", profile_data.auth_type);
-            println!("  API Key: {}", profile_data.mask_api_key());
-            if let Some(desc) = &profile_data.description {
-                println!("  Description: {}", desc);
-            }
+            let data = serde_json::to_value(to_auth_profile_view(profile, profile_data))?;
+            Ok(OutputEnvelope::success(
+                "auth_info",
+                "cli",
+                "uxc",
+                Some(profile),
+                data,
+                None,
+            ))
         }
         AuthCommands::Set {
             profile,
@@ -870,30 +1163,58 @@ async fn handle_auth_command(command: &AuthCommands) -> Result<()> {
             let mut profiles = Profiles::load_profiles()?;
             profiles.set_profile(profile.clone(), profile_obj)?;
             profiles.save_profiles()?;
-
-            println!("Profile '{}' saved successfully.", profile);
-            println!(
-                "  API Key: {}",
-                Profile::new(api_key_display, auth_type_display).mask_api_key()
-            );
+            let view = AuthProfileView {
+                name: profile.clone(),
+                auth_type: auth_type_display.to_string(),
+                api_key_masked: Profile::new(api_key_display, auth_type_display).mask_api_key(),
+                description: description.clone(),
+            };
+            let data = serde_json::to_value(view)?;
+            Ok(OutputEnvelope::success(
+                "auth_set_result",
+                "cli",
+                "uxc",
+                Some(profile),
+                data,
+                None,
+            ))
         }
         AuthCommands::Remove { profile } => {
             let mut profiles = Profiles::load_profiles()?;
 
             if !profiles.has_profile(profile) {
-                println!("Profile '{}' not found.", profile);
-                println!("\nAvailable profiles: {}", profiles.list_names());
-                return Ok(());
+                return Err(UxcError::InvalidArguments(format!(
+                    "Profile '{}' not found. Available profiles: {}",
+                    profile,
+                    profiles.list_names()
+                ))
+                .into());
             }
 
             profiles.remove_profile(profile)?;
             profiles.save_profiles()?;
-
-            println!("Profile '{}' removed successfully.", profile);
+            let data = serde_json::to_value(AuthRemoveData {
+                profile: profile.clone(),
+            })?;
+            Ok(OutputEnvelope::success(
+                "auth_remove_result",
+                "cli",
+                "uxc",
+                Some(profile),
+                data,
+                None,
+            ))
         }
     }
+}
 
-    Ok(())
+fn to_auth_profile_view(name: &str, profile: &Profile) -> AuthProfileView {
+    AuthProfileView {
+        name: name.to_string(),
+        auth_type: profile.auth_type.to_string(),
+        api_key_masked: profile.mask_api_key(),
+        description: profile.description.clone(),
+    }
 }
 
 fn inject_cache_if_supported(

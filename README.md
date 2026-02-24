@@ -128,6 +128,19 @@ Command failures are structured and predictable:
 
 Use `--text` (or `--format text`) for human-readable output.
 
+Global discovery commands are also JSON-first:
+
+```bash
+uxc
+uxc help
+```
+
+Use `--text` when you want CLI-style help text:
+
+```bash
+uxc --text help
+```
+
 If an operation ID conflicts with a CLI keyword (for example `help`/`list`), use explicit `call`:
 
 ```bash
