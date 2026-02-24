@@ -212,6 +212,10 @@ UXC uses protocol-native, machine-friendly `operation_id` values:
 # List available operations
 uxc https://api.example.com list
 
+# Schema-separated service: runtime endpoint and schema URL are different
+uxc https://api.github.com list \
+  --schema-url https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+
 # Get operation help
 uxc https://api.example.com describe get:/users/{id}
 uxc https://api.example.com get:/users/{id} help
@@ -345,12 +349,43 @@ UXC determines the protocol via lightweight probing:
 
 1. Attempt MCP stdio/HTTP discovery
 2. Attempt GraphQL introspection
-3. Check OpenAPI endpoints
+3. Check OpenAPI schema sources:
+   - `--schema-url` override
+   - user/builtin schema mappings
+   - default well-known OpenAPI endpoints (`/openapi.json`, `/swagger.json`, etc.)
 4. Attempt JSON-RPC OpenRPC discovery
 5. Attempt gRPC reflection
 6. Fallback or fail gracefully
 
 Each protocol is handled by a dedicated adapter.
+
+### OpenAPI Schema Mapping
+
+For services where the OpenAPI document is hosted separately from the runtime endpoint
+(for example `api.github.com`), UXC supports:
+
+1. Explicit override via `--schema-url`
+2. Builtin mappings for known services
+3. User mappings in `~/.uxc/schema_mappings.json`
+
+Example user mapping file:
+
+```json
+{
+  "version": 1,
+  "openapi": [
+    {
+      "host": "api.github.com",
+      "path_prefix": "/",
+      "schema_url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+      "priority": 100
+    }
+  ]
+}
+```
+
+For tests or custom environments, the mapping file path can be overridden via:
+`UXC_SCHEMA_MAPPINGS_FILE=/path/to/schema_mappings.json`.
 
 ---
 

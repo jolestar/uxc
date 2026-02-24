@@ -6,7 +6,7 @@ use super::{
 };
 use crate::auth::Profile;
 use crate::error::UxcError;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,7 @@ pub struct OpenAPIAdapter {
     cache: Option<Arc<dyn crate::cache::Cache>>,
     auth_profile: Option<Profile>,
     discovered_schema_urls: Arc<RwLock<HashMap<String, String>>>,
+    schema_url_override: Option<String>,
 }
 
 impl OpenAPIAdapter {
@@ -42,6 +43,7 @@ impl OpenAPIAdapter {
             cache: None,
             auth_profile: None,
             discovered_schema_urls: Arc::new(RwLock::new(HashMap::new())),
+            schema_url_override: None,
         }
     }
 
@@ -55,8 +57,17 @@ impl OpenAPIAdapter {
         self
     }
 
+    pub fn with_schema_url_override(mut self, schema_url: Option<String>) -> Self {
+        self.schema_url_override = schema_url;
+        self
+    }
+
     fn normalized_url(url: &str) -> String {
         url.trim_end_matches('/').to_string()
+    }
+
+    fn schema_cache_key(url: &str, schema_url: &str) -> String {
+        format!("{}#schema={}", Self::normalized_url(url), schema_url)
     }
 
     fn schema_candidates(url: &str) -> Vec<String> {
@@ -80,6 +91,23 @@ impl OpenAPIAdapter {
 
     fn is_openapi_document(body: &Value) -> bool {
         body.get("openapi").is_some() || body.get("swagger").is_some()
+    }
+
+    async fn check_schema_url(&self, schema_url: &str) -> Result<bool> {
+        let response = self
+            .client
+            .get(schema_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .header("Accept", "application/json")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Ok(false);
+        }
+
+        let body = response.json::<Value>().await?;
+        Ok(Self::is_openapi_document(&body))
     }
 
     fn is_http_method(method: &str) -> bool {
@@ -126,6 +154,52 @@ impl OpenAPIAdapter {
             let cache = self.discovered_schema_urls.read().await;
             if let Some(discovered) = cache.get(&normalized) {
                 return Ok(Some(discovered.clone()));
+            }
+        }
+
+        if let Some(schema_url) = &self.schema_url_override {
+            let is_openapi = self.check_schema_url(schema_url).await.with_context(|| {
+                format!(
+                    "Failed to fetch OpenAPI schema from --schema-url '{}'",
+                    schema_url
+                )
+            })?;
+            if !is_openapi {
+                return Err(anyhow::anyhow!(
+                    "Schema URL does not contain an OpenAPI document: {}",
+                    schema_url
+                ));
+            }
+            let mut cache = self.discovered_schema_urls.write().await;
+            cache.insert(normalized, schema_url.clone());
+            return Ok(Some(schema_url.clone()));
+        }
+
+        if let Some(mapping) = crate::schema_mapping::resolve_openapi_schema_mapping(&normalized) {
+            match self.check_schema_url(&mapping.schema_url).await {
+                Ok(true) => {
+                    info!(
+                        "Resolved OpenAPI schema via {}: {} -> {}",
+                        mapping.source.as_str(),
+                        normalized,
+                        mapping.schema_url
+                    );
+                    let mut cache = self.discovered_schema_urls.write().await;
+                    cache.insert(normalized, mapping.schema_url.clone());
+                    return Ok(Some(mapping.schema_url));
+                }
+                Ok(false) => {
+                    debug!(
+                        "Mapped schema URL did not contain OpenAPI document: {}",
+                        mapping.schema_url
+                    );
+                }
+                Err(err) => {
+                    debug!(
+                        "Failed to fetch mapped schema URL '{}': {}",
+                        mapping.schema_url, err
+                    );
+                }
             }
         }
 
@@ -411,36 +485,39 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        let schema_url = self
+            .discover_schema_url(url)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("OpenAPI schema endpoint not found for {}", url))?;
+
+        let cache_key = Self::schema_cache_key(url, &schema_url);
+
         // Try cache first if available
         if let Some(cache) = &self.cache {
-            match cache.get(url)? {
+            match cache.get(&cache_key)? {
                 crate::cache::CacheResult::Hit(schema) => {
-                    debug!("OpenAPI cache hit for: {}", url);
+                    debug!("OpenAPI cache hit for: {}", cache_key);
                     return Ok(schema);
                 }
                 crate::cache::CacheResult::Bypassed => {
-                    debug!("OpenAPI cache bypassed for: {}", url);
+                    debug!("OpenAPI cache bypassed for: {}", cache_key);
                 }
                 crate::cache::CacheResult::Miss => {
-                    debug!("OpenAPI cache miss for: {}", url);
+                    debug!("OpenAPI cache miss for: {}", cache_key);
                 }
             }
         }
 
         // Fetch from remote
-        let schema_url = self
-            .discover_schema_url(url)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("OpenAPI schema endpoint not found for {}", url))?;
         let resp = self.client.get(&schema_url).send().await?;
         let schema: Value = resp.json().await?;
 
         // Store in cache if available
         if let Some(cache) = &self.cache {
-            if let Err(e) = cache.put(url, &schema) {
+            if let Err(e) = cache.put(&cache_key, &schema) {
                 debug!("Failed to cache OpenAPI schema: {}", e);
             } else {
-                info!("Cached OpenAPI schema for: {}", url);
+                info!("Cached OpenAPI schema for: {}", cache_key);
             }
         }
 

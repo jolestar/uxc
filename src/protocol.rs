@@ -1,6 +1,6 @@
 //! Protocol detection and routing
 
-use crate::adapters::{Adapter, AdapterEnum, ProtocolDetector, ProtocolType};
+use crate::adapters::{Adapter, AdapterEnum, DetectionOptions, ProtocolDetector, ProtocolType};
 use crate::error::{Result, UxcError};
 
 /// Protocol detector and router
@@ -29,6 +29,18 @@ impl ProtocolRouter {
     pub async fn get_adapter_for_url(&self, url: &str) -> Result<AdapterEnum> {
         self.detector
             .detect_adapter(url)
+            .await
+            .map_err(UxcError::GenericError)
+    }
+
+    /// Get adapter for a URL with explicit detection options.
+    pub async fn get_adapter_for_url_with_options(
+        &self,
+        url: &str,
+        options: &DetectionOptions,
+    ) -> Result<AdapterEnum> {
+        self.detector
+            .detect_adapter_with_options(url, options)
             .await
             .map_err(UxcError::GenericError)
     }

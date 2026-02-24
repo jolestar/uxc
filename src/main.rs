@@ -11,8 +11,9 @@ mod auth;
 mod cache;
 mod error;
 mod output;
+mod schema_mapping;
 
-use adapters::{Adapter, Operation, OperationDetail, ProtocolDetector};
+use adapters::{Adapter, DetectionOptions, Operation, OperationDetail, ProtocolDetector};
 use auth::{AuthType, Profile, Profiles};
 use cache::CacheConfig;
 use error::UxcError;
@@ -52,6 +53,10 @@ struct Cli {
     /// Cache TTL in seconds
     #[arg(long, global = true)]
     cache_ttl: Option<u64>,
+
+    /// Explicit OpenAPI schema URL (for schema-discovery separated services)
+    #[arg(long, global = true)]
+    schema_url: Option<String>,
 
     /// Output format (default: json)
     #[arg(long, value_enum, global = true)]
@@ -355,10 +360,14 @@ fn normalize_global_args(raw_args: Vec<String>) -> Vec<String> {
     while idx < raw_args.len() {
         let arg = &raw_args[idx];
         let is_global_bool = matches!(arg.as_str(), "--text" | "--no-cache");
-        let is_global_kv = matches!(arg.as_str(), "--format" | "--profile" | "--cache-ttl");
+        let is_global_kv = matches!(
+            arg.as_str(),
+            "--format" | "--profile" | "--cache-ttl" | "--schema-url"
+        );
         let is_global_inline = arg.starts_with("--format=")
             || arg.starts_with("--profile=")
-            || arg.starts_with("--cache-ttl=");
+            || arg.starts_with("--cache-ttl=")
+            || arg.starts_with("--schema-url=");
 
         if is_global_bool || is_global_inline {
             global_args.push(arg.clone());
@@ -429,7 +438,12 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
     let cache = cache::create_cache(cache_config)?;
 
     let detector = ProtocolDetector::new();
-    let mut adapter = detector.detect_adapter(&url).await?;
+    let detection_options = DetectionOptions {
+        schema_url: cli.schema_url.clone(),
+    };
+    let mut adapter = detector
+        .detect_adapter_with_options(&url, &detection_options)
+        .await?;
     adapter = inject_cache_if_supported(adapter, cache);
     adapter = inject_auth_if_supported(adapter, auth_profile);
 
