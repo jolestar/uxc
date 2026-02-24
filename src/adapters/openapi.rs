@@ -1,6 +1,9 @@
 //! OpenAPI/Swagger adapter
 
-use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use super::{
+    Adapter, ExecutionMetadata, ExecutionResult, Operation, OperationDetail, Parameter,
+    ProtocolType,
+};
 use crate::auth::Profile;
 use crate::error::UxcError;
 use anyhow::Result;
@@ -220,34 +223,20 @@ impl Adapter for OpenAPIAdapter {
         Ok(operations)
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
         let operations = self.list_operations(url).await?;
         let op = operations
             .iter()
             .find(|o| o.name == operation)
             .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
-        let mut help = format!("## {}\n", op.name);
-        if let Some(desc) = &op.description {
-            help.push_str(&format!("{}\n\n", desc));
-        }
-
-        if !op.parameters.is_empty() {
-            help.push_str("### Parameters\n\n");
-            for param in &op.parameters {
-                help.push_str(&format!(
-                    "- `{}` ({}){}\n",
-                    param.name,
-                    param.param_type,
-                    if param.required { " **required**" } else { "" }
-                ));
-                if let Some(desc) = &param.description {
-                    help.push_str(&format!("  - {}\n", desc));
-                }
-            }
-        }
-
-        Ok(help)
+        Ok(OperationDetail {
+            name: op.name.clone(),
+            description: op.description.clone(),
+            parameters: op.parameters.clone(),
+            return_type: op.return_type.clone(),
+            input_schema: None,
+        })
     }
 
     async fn execute(

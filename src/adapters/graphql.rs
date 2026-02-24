@@ -6,7 +6,10 @@
 //! - Variable binding and serialization
 //! - Comprehensive error handling
 
-use super::{Adapter, ExecutionMetadata, ExecutionResult, Operation, Parameter, ProtocolType};
+use super::{
+    Adapter, ExecutionMetadata, ExecutionResult, Operation, OperationDetail, Parameter,
+    ProtocolType,
+};
 use crate::auth::Profile;
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
@@ -575,39 +578,19 @@ impl Adapter for GraphQLAdapter {
         Self::parse_schema_to_operations(&schema)
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
         let schema = self.fetch_schema(url).await?;
 
         let op = Self::find_operation(&schema, operation)
             .ok_or_else(|| anyhow!("Operation '{}' not found", operation))?;
 
-        let mut help = format!("Operation: {}\n", op.name);
-
-        if let Some(description) = &op.description {
-            help.push_str(&format!("Description: {}\n", description));
-        }
-
-        if let Some(return_type) = &op.return_type {
-            help.push_str(&format!("Returns: {}\n", return_type));
-        }
-
-        if !op.parameters.is_empty() {
-            help.push_str("\nParameters:\n");
-            for param in &op.parameters {
-                help.push_str(&format!(
-                    "  - {}: {}{}\n",
-                    param.name,
-                    param.param_type,
-                    if param.required { " (required)" } else { "" }
-                ));
-
-                if let Some(param_desc) = &param.description {
-                    help.push_str(&format!("      {}\n", param_desc));
-                }
-            }
-        }
-
-        Ok(help)
+        Ok(OperationDetail {
+            name: op.name,
+            description: op.description,
+            parameters: op.parameters,
+            return_type: op.return_type,
+            input_schema: None,
+        })
     }
 
     async fn execute(

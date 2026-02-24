@@ -7,7 +7,7 @@
 //! - TLS and h2c (cleartext) support
 //! - Proper error handling and status code mapping
 
-use super::{Adapter, ExecutionResult, Operation, Parameter, ProtocolType};
+use super::{Adapter, ExecutionResult, Operation, OperationDetail, Parameter, ProtocolType};
 use crate::auth::Profile;
 use crate::error::UxcError;
 use anyhow::{anyhow, bail, Context, Result};
@@ -617,35 +617,30 @@ impl Adapter for GrpcAdapter {
         Ok(operations)
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
         let method_info = self.find_method(url, operation).await?;
-
-        let mut help = format!(
-            "Method: {}/{}\n",
-            method_info.service_name, method_info.name
-        );
-        help.push_str(&format!("Service: {}\n", method_info.service_name));
-        help.push_str(&format!("Input Type: {}\n", method_info.input_type));
-        help.push_str(&format!("Output Type: {}\n", method_info.output_type));
-
-        // Determine call type
-        let call_type = match (
+        let stream_type = match (
             method_info.is_client_streaming,
             method_info.is_server_streaming,
         ) {
-            (false, false) => "Unary",
-            (false, true) => "Server Streaming",
-            (true, false) => "Client Streaming",
-            (true, true) => "Bidirectional Streaming",
+            (false, false) => "unary",
+            (false, true) => "server_streaming",
+            (true, false) => "client_streaming",
+            (true, true) => "bidi_streaming",
         };
-        help.push_str(&format!("Call Type: {}\n", call_type));
 
-        help.push_str(&format!(
-            "\nUsage:\n  uxc {} call {}\\{{args}}\n",
-            url, operation
-        ));
-
-        Ok(help)
+        Ok(OperationDetail {
+            name: format!("{}/{}", method_info.service_name, method_info.name),
+            description: method_info.description,
+            parameters: vec![Parameter {
+                name: "request".to_string(),
+                param_type: method_info.input_type,
+                required: true,
+                description: Some(format!("gRPC request payload ({})", stream_type)),
+            }],
+            return_type: Some(method_info.output_type),
+            input_schema: None,
+        })
     }
 
     async fn execute(

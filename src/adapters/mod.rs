@@ -14,6 +14,7 @@ pub mod openapi;
 use crate::error::UxcError;
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -64,12 +65,12 @@ impl Adapter for AdapterEnum {
         }
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
         match self {
-            AdapterEnum::OpenAPI(a) => a.operation_help(url, operation).await,
-            AdapterEnum::GRpc(a) => a.operation_help(url, operation).await,
-            AdapterEnum::Mcp(a) => a.operation_help(url, operation).await,
-            AdapterEnum::GraphQL(a) => a.operation_help(url, operation).await,
+            AdapterEnum::OpenAPI(a) => a.describe_operation(url, operation).await,
+            AdapterEnum::GRpc(a) => a.describe_operation(url, operation).await,
+            AdapterEnum::Mcp(a) => a.describe_operation(url, operation).await,
+            AdapterEnum::GraphQL(a) => a.describe_operation(url, operation).await,
         }
     }
 
@@ -110,7 +111,7 @@ impl ProtocolType {
 }
 
 /// Operation metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     pub name: String,
     pub description: Option<String>,
@@ -120,12 +121,22 @@ pub struct Operation {
 }
 
 /// Parameter definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Parameter {
     pub name: String,
     pub param_type: String,
     pub required: bool,
     pub description: Option<String>,
+}
+
+/// Rich operation metadata for progressive discovery
+#[derive(Debug, Clone, Serialize)]
+pub struct OperationDetail {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<String>,
+    pub input_schema: Option<Value>,
 }
 
 /// Execution result
@@ -157,8 +168,8 @@ pub trait Adapter: Send + Sync {
     /// List available operations
     async fn list_operations(&self, url: &str) -> Result<Vec<Operation>>;
 
-    /// Get help for a specific operation
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String>;
+    /// Get rich metadata for a specific operation
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail>;
 
     /// Execute an operation
     async fn execute(

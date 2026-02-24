@@ -7,7 +7,7 @@ pub mod http_transport;
 pub mod transport;
 pub mod types;
 
-use super::{Adapter, ExecutionResult, Operation, ProtocolType};
+use super::{Adapter, ExecutionResult, Operation, OperationDetail, ProtocolType};
 use crate::auth::Profile;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -313,7 +313,7 @@ impl Adapter for McpAdapter {
         Ok(Vec::new())
     }
 
-    async fn operation_help(&self, url: &str, operation: &str) -> Result<String> {
+    async fn describe_operation(&self, url: &str, operation: &str) -> Result<OperationDetail> {
         if Self::is_stdio_command(url) {
             let (cmd, args) = Self::parse_stdio_command(url)?;
             let mut client = McpStdioClient::connect(&cmd, &args).await?;
@@ -322,17 +322,17 @@ impl Adapter for McpAdapter {
 
             for tool in tools {
                 if tool.name == operation {
-                    let mut help = format!("Tool: {}\n", tool.name);
-                    help.push_str(&format!("Description: {}\n", tool.description));
-
-                    if let Some(schema) = tool.inputSchema {
-                        help.push_str(&format!(
-                            "\nInput Schema:\n{}\n",
-                            serde_json::to_string_pretty(&schema)?
-                        ));
-                    }
-
-                    return Ok(help);
+                    return Ok(OperationDetail {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: tool
+                            .inputSchema
+                            .as_ref()
+                            .map(parse_schema_to_parameters)
+                            .unwrap_or_default(),
+                        return_type: Some("ToolContent".to_string()),
+                        input_schema: tool.inputSchema,
+                    });
                 }
             }
 
@@ -349,17 +349,17 @@ impl Adapter for McpAdapter {
 
             for tool in tools {
                 if tool.name == operation {
-                    let mut help = format!("Tool: {}\n", tool.name);
-                    help.push_str(&format!("Description: {}\n", tool.description));
-
-                    if let Some(schema) = tool.inputSchema {
-                        help.push_str(&format!(
-                            "\nInput Schema:\n{}\n",
-                            serde_json::to_string_pretty(&schema)?
-                        ));
-                    }
-
-                    return Ok(help);
+                    return Ok(OperationDetail {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: tool
+                            .inputSchema
+                            .as_ref()
+                            .map(parse_schema_to_parameters)
+                            .unwrap_or_default(),
+                        return_type: Some("ToolContent".to_string()),
+                        input_schema: tool.inputSchema,
+                    });
                 }
             }
 
