@@ -117,7 +117,7 @@ mod tests {
             "call_result",
             "openapi",
             "https://api.example.com",
-            Some("GET /users"),
+            Some("get:/users"),
             serde_json::json!({"users": []}),
             Some(128),
         );
@@ -125,7 +125,7 @@ mod tests {
         assert!(envelope.ok);
         assert_eq!(envelope.kind, Some("call_result".to_string()));
         assert_eq!(envelope.protocol, Some("openapi".to_string()));
-        assert_eq!(envelope.operation, Some("GET /users".to_string()));
+        assert_eq!(envelope.operation, Some("get:/users".to_string()));
     }
 
     #[test]

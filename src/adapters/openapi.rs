@@ -31,6 +31,9 @@ impl OpenAPIAdapter {
         "/docs/swagger.json",
         "/swagger-docs",
     ];
+    const HTTP_METHODS: [&'static str; 8] = [
+        "get", "post", "put", "patch", "delete", "head", "options", "trace",
+    ];
 
     pub fn new() -> Self {
         Self {
@@ -76,6 +79,44 @@ impl OpenAPIAdapter {
 
     fn is_openapi_document(body: &Value) -> bool {
         body.get("openapi").is_some() || body.get("swagger").is_some()
+    }
+
+    fn is_http_method(method: &str) -> bool {
+        Self::HTTP_METHODS.contains(&method)
+    }
+
+    fn operation_id(method: &str, path: &str) -> String {
+        format!("{}:{}", method.to_lowercase(), path)
+    }
+
+    fn display_name(method: &str, path: &str) -> String {
+        format!("{} {}", method.to_uppercase(), path)
+    }
+
+    fn parse_operation_id(operation_id: &str) -> Result<(String, String)> {
+        let (method, path) = operation_id.split_once(':').ok_or_else(|| {
+            UxcError::InvalidArguments(
+                "Invalid operation ID format. Use 'method:/path'".to_string(),
+            )
+        })?;
+
+        if method.is_empty() || path.is_empty() || !path.starts_with('/') {
+            return Err(UxcError::InvalidArguments(
+                "Invalid operation ID format. Use 'method:/path'".to_string(),
+            )
+            .into());
+        }
+
+        let method = method.to_lowercase();
+        if !Self::is_http_method(&method) {
+            return Err(UxcError::InvalidArguments(format!(
+                "Unsupported HTTP method in operation ID: {}",
+                method
+            ))
+            .into());
+        }
+
+        Ok((method, path.to_string()))
     }
 
     async fn discover_schema_url(&self, url: &str) -> Result<Option<String>> {
@@ -178,7 +219,13 @@ impl Adapter for OpenAPIAdapter {
             for (path, methods) in paths {
                 if let Some(methods_obj) = methods.as_object() {
                     for (method, spec) in methods_obj {
-                        let operation_name = format!("{} {}", method.to_uppercase(), path);
+                        let method = method.to_lowercase();
+                        if !Self::is_http_method(&method) {
+                            continue;
+                        }
+
+                        let operation_id = Self::operation_id(&method, path);
+                        let display_name = Self::display_name(&method, path);
 
                         let mut parameters = Vec::new();
                         if let Some(params) = spec.get("parameters").and_then(|p| p.as_array()) {
@@ -206,7 +253,8 @@ impl Adapter for OpenAPIAdapter {
                         }
 
                         operations.push(Operation {
-                            name: operation_name,
+                            operation_id,
+                            display_name,
                             description: spec
                                 .get("description")
                                 .or(spec.get("summary"))
@@ -227,11 +275,12 @@ impl Adapter for OpenAPIAdapter {
         let operations = self.list_operations(url).await?;
         let op = operations
             .iter()
-            .find(|o| o.name == operation)
+            .find(|o| o.operation_id == operation)
             .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
         Ok(OperationDetail {
-            name: op.name.clone(),
+            operation_id: op.operation_id.clone(),
+            display_name: op.display_name.clone(),
             description: op.description.clone(),
             parameters: op.parameters.clone(),
             return_type: op.return_type.clone(),
@@ -246,27 +295,19 @@ impl Adapter for OpenAPIAdapter {
         args: HashMap<String, Value>,
     ) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
-
-        // Parse operation (e.g., "GET /users/{id}")
-        let parts: Vec<&str> = operation.splitn(2, ' ').collect();
-        if parts.len() != 2 {
-            return Err(UxcError::InvalidArguments(
-                "Invalid operation format. Use 'METHOD /path'".to_string(),
-            )
-            .into());
-        }
-
-        let method = parts[0];
-        let path = parts[1];
+        let (method, path) = Self::parse_operation_id(operation)?;
 
         let full_url = format!("{}{}", url.trim_end_matches('/'), path);
 
-        let req = match method.to_uppercase().as_str() {
-            "GET" => self.client.get(&full_url),
-            "POST" => self.client.post(&full_url),
-            "PUT" => self.client.put(&full_url),
-            "DELETE" => self.client.delete(&full_url),
-            "PATCH" => self.client.patch(&full_url),
+        let req = match method.as_str() {
+            "get" => self.client.get(&full_url),
+            "post" => self.client.post(&full_url),
+            "put" => self.client.put(&full_url),
+            "delete" => self.client.delete(&full_url),
+            "patch" => self.client.patch(&full_url),
+            "head" => self.client.head(&full_url),
+            "options" => self.client.request(reqwest::Method::OPTIONS, &full_url),
+            "trace" => self.client.request(reqwest::Method::TRACE, &full_url),
             _ => {
                 return Err(UxcError::InvalidArguments(format!(
                     "Unsupported HTTP method: {}",
@@ -371,5 +412,22 @@ mod tests {
     fn schema_candidates_do_not_append_to_schema_url() {
         let candidates = OpenAPIAdapter::schema_candidates("https://example.com/openapi.json");
         assert_eq!(candidates, vec!["https://example.com/openapi.json"]);
+    }
+
+    #[test]
+    fn parse_operation_id_accepts_method_path_format() {
+        let (method, path) = OpenAPIAdapter::parse_operation_id("post:/pet").unwrap();
+        assert_eq!(method, "post");
+        assert_eq!(path, "/pet");
+    }
+
+    #[test]
+    fn parse_operation_id_rejects_legacy_display_format() {
+        let err = OpenAPIAdapter::parse_operation_id("POST /pet").unwrap_err();
+        assert!(
+            err.to_string().contains("method:/path"),
+            "unexpected error: {}",
+            err
+        );
     }
 }

@@ -113,7 +113,8 @@ impl ProtocolType {
 /// Operation metadata
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
-    pub name: String,
+    pub operation_id: String,
+    pub display_name: String,
     pub description: Option<String>,
     pub parameters: Vec<Parameter>,
     #[allow(dead_code)]
@@ -132,7 +133,8 @@ pub struct Parameter {
 /// Rich operation metadata for progressive discovery
 #[derive(Debug, Clone, Serialize)]
 pub struct OperationDetail {
-    pub name: String,
+    pub operation_id: String,
+    pub display_name: String,
     pub description: Option<String>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<String>,

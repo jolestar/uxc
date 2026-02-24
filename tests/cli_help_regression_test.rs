@@ -39,7 +39,7 @@ fn operation_help_works_with_dynamic_syntax() {
 
     let output = uxc_command()
         .arg(server.url())
-        .arg("GET /pets")
+        .arg("get:/pets")
         .arg("help")
         .output()
         .expect("failed to run uxc");
@@ -49,7 +49,9 @@ fn operation_help_works_with_dynamic_syntax() {
         serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     assert_eq!(json["ok"], true);
     assert_eq!(json["kind"], "operation_detail");
-    assert_eq!(json["operation"], "GET /pets");
+    assert_eq!(json["operation"], "get:/pets");
+    assert_eq!(json["data"]["operation_id"], "get:/pets");
+    assert_eq!(json["data"]["display_name"], "GET /pets");
 }
 
 #[test]
@@ -67,7 +69,7 @@ fn text_and_format_flags_are_mutually_exclusive() {
 }
 
 #[test]
-fn exec_subcommand_executes_operation() {
+fn call_subcommand_executes_operation() {
     let mut server = mockito::Server::new();
     let _schema = server
         .mock("GET", "/openapi.json")
@@ -97,8 +99,8 @@ fn exec_subcommand_executes_operation() {
 
     let output = uxc_command()
         .arg(server.url())
-        .arg("exec")
-        .arg("GET /pets")
+        .arg("call")
+        .arg("get:/pets")
         .output()
         .expect("failed to run uxc");
 
@@ -107,5 +109,42 @@ fn exec_subcommand_executes_operation() {
         serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     assert_eq!(json["ok"], true);
     assert_eq!(json["kind"], "call_result");
-    assert_eq!(json["operation"], "GET /pets");
+    assert_eq!(json["operation"], "get:/pets");
+}
+
+#[test]
+fn list_outputs_operation_id_and_display_name() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"#,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("list")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(output.status.success(), "command should succeed");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    let first = &json["data"]["operations"][0];
+    assert_eq!(first["operation_id"], "get:/pets");
+    assert_eq!(first["display_name"], "GET /pets");
 }

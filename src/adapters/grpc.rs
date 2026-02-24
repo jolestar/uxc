@@ -340,36 +340,29 @@ impl GrpcAdapter {
 
     /// Find method by full name (ServiceName/MethodName)
     async fn find_method(&self, url: &str, operation: &str) -> Result<MethodInfo> {
-        let parts: Vec<&str> = operation.split('/').collect();
-        let (service_name, method_name) = match parts.as_slice() {
-            [service, method] => (service.to_string(), method.to_string()),
-            [method] => {
-                // Need to search all services for this method
-                let services = self.get_service_info(url).await?;
-                for (_, service_info) in services {
-                    if let Some(method_info) = service_info.methods.get(*method) {
-                        return Ok(method_info.clone());
-                    }
-                }
-                return Err(UxcError::OperationNotFound(operation.to_string()).into());
-            }
-            _ => {
-                return Err(UxcError::InvalidArguments(format!(
-                    "Invalid operation format: {}. Use ServiceName/MethodName",
-                    operation
-                ))
-                .into())
-            }
-        };
+        let (service_name, method_name) = operation.split_once('/').ok_or_else(|| {
+            UxcError::InvalidArguments(format!(
+                "Invalid operation ID format: {}. Use ServiceName/MethodName",
+                operation
+            ))
+        })?;
+        if service_name.is_empty() || method_name.is_empty() {
+            return Err(UxcError::InvalidArguments(format!(
+                "Invalid operation ID format: {}. Use ServiceName/MethodName",
+                operation
+            ))
+            .into());
+        }
 
         let services = self.get_service_info(url).await?;
         let service_info = services
-            .get(&service_name)
-            .ok_or_else(|| UxcError::OperationNotFound(service_name.clone()))?;
+            .get(service_name)
+            .ok_or_else(|| UxcError::OperationNotFound(service_name.to_string()))?;
 
-        let method_info = service_info.methods.get(&method_name).ok_or_else(|| {
-            UxcError::OperationNotFound(format!("{}/{}", service_name, method_name))
-        })?;
+        let method_info = service_info
+            .methods
+            .get(method_name)
+            .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
 
         Ok(method_info.clone())
     }
@@ -598,7 +591,8 @@ impl Adapter for GrpcAdapter {
         for (service_name, service_info) in &services {
             for (method_name, method_info) in &service_info.methods {
                 operations.push(Operation {
-                    name: format!("{}/{}", service_name, method_name),
+                    operation_id: format!("{}/{}", service_name, method_name),
+                    display_name: format!("{}/{}", service_name, method_name),
                     description: method_info.description.clone(),
                     parameters: vec![Parameter {
                         name: "request".to_string(),
@@ -630,7 +624,8 @@ impl Adapter for GrpcAdapter {
         };
 
         Ok(OperationDetail {
-            name: format!("{}/{}", method_info.service_name, method_info.name),
+            operation_id: format!("{}/{}", method_info.service_name, method_info.name),
+            display_name: format!("{}/{}", method_info.service_name, method_info.name),
             description: method_info.description,
             parameters: vec![Parameter {
                 name: "request".to_string(),
@@ -715,6 +710,20 @@ mod tests {
         assert_eq!(
             GrpcAdapter::grpcurl_attempts("https://grpcb.in:9001", "grpcb.in:9001"),
             vec![false]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_method_requires_service_method_format() {
+        let adapter = GrpcAdapter::new();
+        let err = adapter
+            .find_method("localhost:50051", "Sum")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("ServiceName/MethodName"),
+            "unexpected error: {}",
+            err
         );
     }
 

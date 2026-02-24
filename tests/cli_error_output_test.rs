@@ -62,3 +62,47 @@ fn operation_execution_failure_uses_error_envelope() {
     assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
     assert!(json["error"]["message"].is_string());
 }
+
+#[test]
+fn openapi_legacy_operation_format_is_rejected() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"#,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("GET /pets")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(!output.status.success(), "command should fail");
+
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("method:/path"),
+        "unexpected error message: {}",
+        json["error"]["message"]
+    );
+}
