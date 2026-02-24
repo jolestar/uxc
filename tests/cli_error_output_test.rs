@@ -12,13 +12,22 @@ fn uxc() -> Command {
 
 #[test]
 fn protocol_detection_failure_uses_error_envelope() {
-    uxc()
+    let output = uxc()
         .arg("http://127.0.0.1:9")
         .arg("list")
         .assert()
         .failure()
         .stdout(predicates::str::contains("PROTOCOL_DETECTION_FAILED"))
         .stderr(predicates::str::is_empty());
+
+    // Verify JSON error envelope structure
+    let stdout = output.get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&stdout)
+        .expect("stdout should be valid JSON");
+
+    assert_eq!(json["ok"], false, "ok should be false");
+    assert_eq!(json["error"]["code"], "PROTOCOL_DETECTION_FAILED");
+    assert!(json["error"]["message"].is_string(), "error.message should be a string");
 }
 
 #[test]
@@ -48,9 +57,19 @@ fn operation_execution_failure_uses_error_envelope() {
     uxc().arg(server.url()).arg("list").assert().success();
 
     // Call with non-existent operation should fail with error envelope
-    uxc()
+    let output = uxc()
         .arg(server.url())
         .arg("nonexistent")
         .assert()
         .failure();
+
+    // Verify JSON error envelope structure
+    let stdout = output.get_output().stdout.clone();
+    let json: serde_json::Value = serde_json::from_slice(&stdout)
+        .expect("stdout should be valid JSON");
+
+    assert_eq!(json["ok"], false, "ok should be false");
+    assert!(json["error"].is_object(), "error should be an object");
+    assert!(json["error"]["code"].is_string(), "error.code should be a string");
+    assert!(json["error"]["message"].is_string(), "error.message should be a string");
 }
