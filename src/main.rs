@@ -36,7 +36,7 @@ enum OutputMode {
 #[derive(Parser)]
 #[command(name = "uxc")]
 #[command(about = "Universal X-Protocol Call", long_about = None)]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(disable_help_flag = true)]
 #[command(disable_help_subcommand = true)]
 struct Cli {
@@ -285,13 +285,27 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    let normalized_args = normalize_global_args(std::env::args().collect());
+    let raw_args: Vec<String> = std::env::args().collect();
+    if is_version_shortcut(&raw_args) {
+        print_version();
+        return;
+    }
+
+    let normalized_args = normalize_global_args(raw_args);
     let fallback_output_mode = output_mode_from_args(&normalized_args);
 
     if let Err(err) = run(normalized_args).await {
         render_error(&err, fallback_output_mode);
         std::process::exit(1);
     }
+}
+
+fn is_version_shortcut(args: &[String]) -> bool {
+    args.len() == 2 && matches!(args[1].as_str(), "-v" | "version")
+}
+
+fn print_version() {
+    println!("uxc {}", env!("CARGO_PKG_VERSION"));
 }
 
 fn render_error(err: &anyhow::Error, output_mode: OutputMode) {
@@ -501,7 +515,7 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
         .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))
         .map(|raw| normalize_endpoint_url(&raw))?;
 
-    info!("UXC v0.1.0 - connecting to {}", url);
+    info!("UXC v{} - connecting to {}", env!("CARGO_PKG_VERSION"), url);
 
     let endpoint_command = resolve_endpoint_command(cli)?;
     let auth_profile = load_auth_profile(cli.profile.clone())?;
