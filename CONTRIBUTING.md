@@ -64,7 +64,19 @@ Example: `feature/openapi-parser`
    cargo test
    ```
 
-6. Commit changes:
+6. Debug with logging:
+   ```bash
+   # Run with info logs to see HTTP requests/responses
+   RUST_LOG=info cargo run -- https://api.example.com list
+
+   # Run with debug logs for detailed diagnostics
+   RUST_LOG=debug cargo run -- https://api.example.com list
+
+   # Enable logs for specific modules only
+   RUST_LOG=uxc::adapters::openapi=debug cargo run -- https://api.example.com list
+   ```
+
+7. Commit changes:
    ```bash
    git add .
    git commit -m "feat: add OpenAPI schema parser"

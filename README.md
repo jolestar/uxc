@@ -176,6 +176,36 @@ uxc https://api.example.com list --no-cache
 uxc https://api.example.com list --cache-ttl 3600
 ```
 
+## Debugging and Logging
+
+UXC uses structured logging with the `tracing` crate. By default, only warnings and errors are displayed.
+
+```bash
+# Default: warnings and errors only
+uxc https://api.example.com list
+
+# Enable info logs (HTTP requests, responses, etc.)
+RUST_LOG=info uxc https://api.example.com list
+
+# Enable debug logs (detailed debugging information)
+RUST_LOG=debug uxc https://api.example.com list
+
+# Enable trace logs (maximum verbosity)
+RUST_LOG=trace uxc https://api.example.com list
+
+# Enable logs for specific modules only
+RUST_LOG=uxc::adapters::openapi=debug uxc https://api.example.com list
+```
+
+**Log Levels:**
+- `error` - Critical failures that prevent operation completion
+- `warn` - **[Default]** Non-critical issues and warnings
+- `info` - Informational messages (HTTP requests, protocol detection, etc.)
+- `debug` - Detailed debugging information
+- `trace` - Extremely verbose tracing information
+
+Logs are written to stderr to avoid interfering with JSON output on stdout.
+
 ## Installation
 
 ### From Source
