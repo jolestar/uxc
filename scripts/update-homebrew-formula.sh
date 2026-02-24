@@ -67,7 +67,11 @@ checksum_for() {
   local file="$1"
   local path="${DIST_DIR}/${file}"
   [[ -f "${path}" ]] || fail "artifact not found: ${path}"
-  sha256sum "${path}" | awk '{print $1}'
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  else
+    shasum -a 256 "${path}" | awk '{print $1}'
+  fi
 }
 
 render_formula() {
@@ -121,9 +125,14 @@ main() {
 
   need_cmd git
   need_cmd mktemp
-  need_cmd sha256sum
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    fail "sha256sum or shasum is required"
+  fi
 
   [[ -n "${VERSION}" ]] || fail "--version is required"
+  if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    fail "--version must match x.y.z (numeric semantic version, e.g. 1.2.3)"
+  fi
   [[ -n "${DIST_DIR}" ]] || fail "--dist-dir is required"
   [[ -n "${REPO}" ]] || fail "--repo is required"
   [[ -d "${DIST_DIR}" ]] || fail "dist dir not found: ${DIST_DIR}"
@@ -139,10 +148,24 @@ main() {
   workdir="$(mktemp -d)"
   trap 'rm -rf "${workdir}"' EXIT
 
-  local clone_url
-  clone_url="https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/${TAP_REPO}.git"
+  local askpass_script clone_url
+  askpass_script="${workdir}/git-askpass.sh"
+  cat > "${askpass_script}" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  *Username*)
+    echo "x-access-token"
+    ;;
+  *Password*)
+    echo "${HOMEBREW_TAP_GITHUB_TOKEN}"
+    ;;
+esac
+EOF
+  chmod 700 "${askpass_script}"
 
-  git clone --depth 1 --branch "${TAP_BRANCH}" "${clone_url}" "${workdir}/tap"
+  clone_url="https://github.com/${TAP_REPO}.git"
+  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="${askpass_script}" \
+    git clone --quiet --depth 1 --branch "${TAP_BRANCH}" "${clone_url}" "${workdir}/tap"
   mkdir -p "${workdir}/tap/Formula"
   render_formula "${VERSION}" "${REPO}" "${mac_arm_sha}" "${mac_x64_sha}" "${linux_arm_sha}" "${linux_x64_sha}" > "${workdir}/tap/Formula/uxc.rb"
 

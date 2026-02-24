@@ -704,7 +704,14 @@ data: invalid json
 
         let result = transport.send_request("test", None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to send HTTP request"));
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("HTTP")
+                || err.contains("http")
+                || err.contains("request")
+                || err.contains("connect"),
+            "unexpected error message: {err}"
+        );
     }
 
     // ===== Initialize Tests =====

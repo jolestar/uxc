@@ -221,6 +221,14 @@ brew install uxc
 curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh | bash
 ```
 
+If you prefer to review before execution:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh -o install-uxc.sh
+less install-uxc.sh
+bash install-uxc.sh
+```
+
 Install a specific version:
 
 ```bash

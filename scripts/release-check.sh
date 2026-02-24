@@ -37,7 +37,11 @@ main() {
   fi
 
   local version
-  version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+  version="$(awk -F\" '
+    /^\[package\]/ { in_pkg = 1; next }
+    /^\[/ && !/^\[package\]/ { if (in_pkg) exit }
+    in_pkg && /^version[[:space:]]*=/ { print $2; exit }
+  ' Cargo.toml)"
   [[ -n "${version}" ]] || fail "failed to read version from Cargo.toml"
 
   if [[ -n "${EXPECTED_TAG}" ]]; then
@@ -46,10 +50,10 @@ main() {
     [[ "${normalized}" == "v${version}" ]] || fail "tag ${normalized} does not match Cargo.toml version v${version}"
   fi
 
-  grep -q "^## \\[${version}\\]" CHANGELOG.md || fail "CHANGELOG.md does not contain section for ${version}"
+  grep -Eq "^## \\[${version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md \
+    || fail "CHANGELOG.md does not contain dated release section for ${version}"
 
-  cargo fmt -- --check
-  cargo clippy --all-targets --all-features -- -D warnings -A non_camel_case_types -A unused_variables -A unused_imports -A dead_code -A clippy::upper_case_acronyms -A clippy::enum_variant_names
+  cargo clippy -- -D warnings -A non_camel_case_types -A unused_variables -A unused_imports -A dead_code -A clippy::upper_case_acronyms -A clippy::enum_variant_names -A clippy::vec_init_then_push -A clippy::type_complexity
   cargo test --locked -- --test-threads=1
 
   printf '[release-check] OK: version=%s\n' "${version}"

@@ -15,7 +15,7 @@ Usage:
   install.sh [-v VERSION] [-d INSTALL_DIR] [--no-verify] [-h]
 
 Options:
-  -v, --version VERSION   Version to install (for example: 0.2.0 or v0.2.0)
+  -v, --version VERSION   Version to install (for example: X.Y.Z or vX.Y.Z)
   -d, --dir PATH          Install directory (default: /usr/local/bin)
       --no-verify         Skip SHA256 checksum verification
   -h, --help              Show this help
@@ -37,9 +37,14 @@ need_cmd() {
 
 resolve_latest_tag() {
   local api_url="https://api.github.com/repos/${REPO}/releases/latest"
-  local tag
+  local response tag
+  response="$(curl -fsSL "${api_url}")" || fail "failed to fetch latest release metadata from ${api_url}"
 
-  tag="$(curl -fsSL "${api_url}" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  if command -v jq >/dev/null 2>&1; then
+    tag="$(printf '%s\n' "${response}" | jq -r '.tag_name // empty' | head -n1)"
+  else
+    tag="$(printf '%s\n' "${response}" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  fi
   [[ -n "${tag}" ]] || fail "failed to resolve latest release tag from ${api_url}"
   printf '%s' "${tag}"
 }
@@ -122,6 +127,7 @@ main() {
   need_cmd curl
   need_cmd tar
   need_cmd install
+  need_cmd mktemp
   if [[ "${VERIFY_CHECKSUMS}" -eq 1 ]]; then
     if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
       fail "sha256sum or shasum is required for checksum verification"
@@ -164,6 +170,9 @@ main() {
     log "checksum verification passed"
   fi
 
+  if tar -tzf "${package_path}" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    fail "archive contains unsafe paths"
+  fi
   tar -xzf "${package_path}" -C "${tmpdir}"
 
   local extracted_dir binary_path
