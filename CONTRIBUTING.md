@@ -191,6 +191,29 @@ Technical approach
 Maintainers will review PRs within 48 hours.
 Feel free to ping after 3 days if no response.
 
+## Release Process
+
+Releases are tag-driven and automated by `.github/workflows/release.yml`.
+
+### Before Tagging
+
+1. Update `Cargo.toml` version
+2. Update `CHANGELOG.md` for that version
+3. Run:
+
+```bash
+./scripts/release-check.sh vX.Y.Z
+```
+
+### Publish
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+See `docs/release.md` for full details, rollback, and troubleshooting.
+
 ## Testing & Coverage
 
 ### Unit Tests

@@ -208,21 +208,45 @@ Logs are written to stderr to avoid interfering with JSON output on stdout.
 
 ## Installation
 
-### From Source
+### Homebrew (macOS/Linux)
 
 ```bash
-# Clone the repository
-git clone https://github.com/jolestar/uxc.git
-cd uxc
-
-# Build and install
-cargo install --path .
+brew tap jolestar/homebrew-uxc
+brew install uxc
 ```
 
-### Using Cargo (Coming Soon)
+### Install Script (macOS/Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh | bash
+```
+
+If you prefer to review before execution:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh -o install-uxc.sh
+less install-uxc.sh
+bash install-uxc.sh
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh | bash -s -- -v v0.1.0
+```
+
+### Cargo
 
 ```bash
 cargo install uxc
+```
+
+### From Source
+
+```bash
+git clone https://github.com/jolestar/uxc.git
+cd uxc
+cargo install --path .
 ```
 
 ## Example Usage
