@@ -49,8 +49,8 @@ jobs:
           set -euo pipefail
           UXC=target/release/uxc
           $UXC https://petstore3.swagger.io/api/v3 list \
-            | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .name == "GET /store/inventory")'
-          $UXC https://petstore3.swagger.io/api/v3 "GET /store/inventory" \
+            | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .operation_id == "get:/store/inventory")'
+          $UXC https://petstore3.swagger.io/api/v3 get:/store/inventory \
             | jq -e '.ok == true and .protocol == "openapi" and .kind == "call_result"'
 
       - name: GraphQL smoke
@@ -60,7 +60,7 @@ jobs:
           UXC=target/release/uxc
           for attempt in 1 2 3; do
             if "$UXC" https://countries.trevorblades.com/ list \
-              | jq -e '.ok == true and any(.data.operations[]; .name == "query/country")' >/dev/null; then
+              | jq -e '.ok == true and any(.data.operations[]; .operation_id == "query/country")' >/dev/null; then
               break
             fi
             if [[ "$attempt" -eq 3 ]]; then
@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           UXC=target/release/uxc
           $UXC grpcb.in:9000 list \
-            | jq -e '.ok == true and any(.data.operations[]; .name == "addsvc.Add/Sum")'
+            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "addsvc.Add/Sum")'
           $UXC grpcb.in:9000 addsvc.Add/Sum --json '{"a":1,"b":2}' \
             | jq -e '.ok == true and .protocol == "grpc" and .data.v == "3"'
 
@@ -98,7 +98,7 @@ jobs:
           set -euo pipefail
           UXC=target/release/uxc
           $UXC https://mcp.deepwiki.com/mcp list \
-            | jq -e '.ok == true and any(.data.operations[]; .name == "read_wiki_structure")'
+            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "read_wiki_structure")'
           $UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"jolestar/uxc"}' \
             | jq -e '.ok == true and .protocol == "mcp"'
 
@@ -109,6 +109,6 @@ jobs:
           UXC=target/release/uxc
           MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp'
           "$UXC" "$MCP_STDIO" list \
-            | jq -e '.ok == true and any(.data.operations[]; .name == "list_directory")'
+            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "list_directory")'
           "$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' \
             | jq -e '.ok == true and .protocol == "mcp"'

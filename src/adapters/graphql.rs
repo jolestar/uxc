@@ -302,9 +302,11 @@ impl GraphQLAdapter {
                     let parameters = Self::parse_field_args(field);
 
                     let return_type = field.get("type").map(Self::type_to_string);
+                    let operation_id = format!("query/{}", name);
 
                     operations.push(Operation {
-                        name: format!("query/{}", name),
+                        operation_id: operation_id.clone(),
+                        display_name: operation_id,
                         description,
                         parameters,
                         return_type,
@@ -331,9 +333,11 @@ impl GraphQLAdapter {
                     let parameters = Self::parse_field_args(field);
 
                     let return_type = field.get("type").map(Self::type_to_string);
+                    let operation_id = format!("mutation/{}", name);
 
                     operations.push(Operation {
-                        name: format!("mutation/{}", name),
+                        operation_id: operation_id.clone(),
+                        display_name: operation_id,
                         description,
                         parameters,
                         return_type,
@@ -360,9 +364,11 @@ impl GraphQLAdapter {
                     let parameters = Self::parse_field_args(field);
 
                     let return_type = field.get("type").map(Self::type_to_string);
+                    let operation_id = format!("subscription/{}", name);
 
                     operations.push(Operation {
-                        name: format!("subscription/{}", name),
+                        operation_id: operation_id.clone(),
+                        display_name: operation_id,
                         description,
                         parameters,
                         return_type,
@@ -404,7 +410,9 @@ impl GraphQLAdapter {
     /// Find operation details from parsed operations
     fn find_operation(schema: &Value, operation: &str) -> Option<Operation> {
         let operations = Self::parse_schema_to_operations(schema).ok()?;
-        operations.into_iter().find(|op| op.name == operation)
+        operations
+            .into_iter()
+            .find(|op| op.operation_id == operation)
     }
 
     /// Determine operation type and name from operation string
@@ -416,8 +424,10 @@ impl GraphQLAdapter {
         } else if let Some(rest) = operation.strip_prefix("subscription/") {
             Ok((OperationType::Subscription, rest.to_string()))
         } else {
-            // Default to query for backward compatibility
-            Ok((OperationType::Query, operation.to_string()))
+            bail!(
+                "Invalid GraphQL operation ID '{}'. Use query/<field>, mutation/<field>, or subscription/<field>",
+                operation
+            )
         }
     }
 
@@ -585,7 +595,8 @@ impl Adapter for GraphQLAdapter {
             .ok_or_else(|| anyhow!("Operation '{}' not found", operation))?;
 
         Ok(OperationDetail {
-            name: op.name,
+            operation_id: op.operation_id,
+            display_name: op.display_name,
             description: op.description,
             parameters: op.parameters,
             return_type: op.return_type,
@@ -721,9 +732,12 @@ mod tests {
         assert!(matches!(op_type, OperationType::Mutation));
         assert_eq!(name, "addStar");
 
-        let (op_type, name) = GraphQLAdapter::parse_operation_name("viewer").unwrap();
-        assert!(matches!(op_type, OperationType::Query));
-        assert_eq!(name, "viewer");
+        let err = GraphQLAdapter::parse_operation_name("viewer").unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid GraphQL operation ID"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]

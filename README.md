@@ -47,7 +47,7 @@ UXC does not require registering server aliases.
 
 ```bash
 uxc https://api.example.com list
-uxc https://api.example.com "GET /users/42"
+uxc https://api.example.com get:/users/42
 ```
 
 Any compliant endpoint can be called directly.
@@ -100,7 +100,7 @@ The CLI interface remains consistent across protocols.
   "kind": "call_result",
   "protocol": "openapi",
   "endpoint": "https://api.example.com",
-  "operation": "GET /users/{id}",
+  "operation": "get:/users/{id}",
   "data": { ... },
   "meta": {
     "version": "v1",
@@ -126,10 +126,10 @@ Command failures are structured and predictable:
 
 Use `--text` (or `--format text`) for human-readable output.
 
-If an operation name conflicts with a CLI keyword (for example `help`/`list`), use:
+If an operation ID conflicts with a CLI keyword (for example `help`/`list`), use explicit `call`:
 
 ```bash
-uxc <host> exec <operation> [--json '{...}']
+uxc <host> call <operation_id> [--json '{...}']
 ```
 
 This makes UXC ideal for:
@@ -181,6 +181,15 @@ cargo install uxc
 
 ## Example Usage
 
+### Operation ID Conventions
+
+UXC uses protocol-native, machine-friendly `operation_id` values:
+
+- OpenAPI: `method:/path` (e.g. `get:/users/{id}`, `post:/pet`)
+- gRPC: `Service/Method`
+- GraphQL: `query/viewer`, `mutation/addStar`, `subscription/onEvent`
+- MCP: tool name (e.g. `ask_question`)
+
 ### OpenAPI / REST APIs
 
 ```bash
@@ -188,14 +197,14 @@ cargo install uxc
 uxc https://api.example.com list
 
 # Get operation help
-uxc https://api.example.com describe "GET /users/{id}"
-uxc https://api.example.com "GET /users/{id}" help
+uxc https://api.example.com describe get:/users/{id}
+uxc https://api.example.com get:/users/{id} help
 
 # Execute with parameters
-uxc https://api.example.com "GET /users/{id}" --json '{"id":42}'
+uxc https://api.example.com get:/users/{id} --json '{"id":42}'
 
 # Execute with JSON input
-uxc https://api.example.com "POST /users" --json '{"name":"Alice","email":"alice@example.com"}'
+uxc https://api.example.com call post:/users --json '{"name":"Alice","email":"alice@example.com"}'
 ```
 
 ### gRPC Services
@@ -232,6 +241,9 @@ uxc https://graphql.example.com mutation/addStar --json '{"starredId":"123"}'
 # HTTP transport (recommended for production)
 uxc https://mcp-server.example.com list
 uxc https://mcp-server.example.com tool_name --json '{"param1":"value1"}'
+
+# If a tool name conflicts with CLI subcommands, use explicit call
+uxc https://mcp-server.example.com call help --json '{}'
 
 # stdio transport (for local development)
 uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list

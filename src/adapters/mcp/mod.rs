@@ -269,7 +269,8 @@ impl Adapter for McpAdapter {
                     };
 
                     Operation {
-                        name: tool.name.clone(),
+                        operation_id: tool.name.clone(),
+                        display_name: tool.name.clone(),
                         description: Some(tool.description),
                         parameters,
                         return_type: Some("ToolContent".to_string()),
@@ -298,7 +299,8 @@ impl Adapter for McpAdapter {
                     };
 
                     Operation {
-                        name: tool.name.clone(),
+                        operation_id: tool.name.clone(),
+                        display_name: tool.name.clone(),
                         description: Some(tool.description),
                         parameters,
                         return_type: Some("ToolContent".to_string()),
@@ -323,7 +325,8 @@ impl Adapter for McpAdapter {
             for tool in tools {
                 if tool.name == operation {
                     return Ok(OperationDetail {
-                        name: tool.name,
+                        operation_id: tool.name.clone(),
+                        display_name: tool.name,
                         description: Some(tool.description),
                         parameters: tool
                             .inputSchema
@@ -350,7 +353,8 @@ impl Adapter for McpAdapter {
             for tool in tools {
                 if tool.name == operation {
                     return Ok(OperationDetail {
-                        name: tool.name,
+                        operation_id: tool.name.clone(),
+                        display_name: tool.name,
                         description: Some(tool.description),
                         parameters: tool
                             .inputSchema

@@ -79,16 +79,16 @@ enum Commands {
 
     /// Describe one operation in detail
     Describe {
-        /// Operation name (e.g., "GET /users/{id}", "query/user", "ask_question")
-        #[arg(value_name = "OPERATION")]
-        operation: String,
+        /// Operation ID (e.g., "get:/users/{id}", "query/user", "ask_question")
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: String,
     },
 
-    /// Show endpoint help, or operation help when OPERATION is provided
+    /// Show endpoint help, or operation help when OPERATION_ID is provided
     Help {
-        /// Optional operation name
-        #[arg(value_name = "OPERATION")]
-        operation: Option<String>,
+        /// Optional operation ID
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: Option<String>,
     },
 
     /// Inspect endpoint/schema
@@ -110,11 +110,11 @@ enum Commands {
         auth_command: AuthCommands,
     },
 
-    /// Execute an operation explicitly (escape hatch for reserved operation names)
-    Exec {
-        /// Operation name (e.g., "help", "list", "GET /users/{id}")
-        #[arg(value_name = "OPERATION")]
-        operation: String,
+    /// Execute an operation explicitly
+    Call {
+        /// Operation ID
+        #[arg(value_name = "OPERATION_ID")]
+        operation_id: String,
 
         /// Key-value arguments (e.g., "id=42")
         #[arg(short, long)]
@@ -125,7 +125,7 @@ enum Commands {
         json: Option<String>,
     },
 
-    /// Dynamic operation execution: `uxc <url> <operation> [--json ...] [--args k=v]`
+    /// Dynamic operation execution: `uxc <url> <operation_id> [--json ...] [--args k=v]`
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -191,13 +191,13 @@ enum EndpointCommand {
         verbose: bool,
     },
     Describe {
-        operation: String,
+        operation_id: String,
     },
     Inspect {
         full: bool,
     },
     Execute {
-        operation: String,
+        operation_id: String,
         args: Vec<String>,
         json: Option<String>,
     },
@@ -205,7 +205,8 @@ enum EndpointCommand {
 
 #[derive(Debug, Serialize)]
 struct OperationSummary {
-    name: String,
+    operation_id: String,
+    display_name: String,
     summary: Option<String>,
     required: Vec<String>,
     input_shape_hint: String,
@@ -308,8 +309,8 @@ async fn run() -> Result<()> {
                     "count": summaries.len(),
                     "next": [
                         "uxc <host> list",
-                        "uxc <host> describe <operation>",
-                        "uxc <host> <operation> --json '{...}'"
+                        "uxc <host> describe <operation_id>",
+                        "uxc <host> call <operation_id> --json '{...}'"
                     ]
                 });
                 print_json(OutputEnvelope::success(
@@ -348,9 +349,9 @@ async fn run() -> Result<()> {
                 print_list_text(protocol, &operations, verbose);
             }
         }
-        EndpointCommand::Describe { operation } => {
+        EndpointCommand::Describe { operation_id } => {
             let start = std::time::Instant::now();
-            let detail = adapter.describe_operation(&url, &operation).await?;
+            let detail = adapter.describe_operation(&url, &operation_id).await?;
             let protocol = adapter.protocol_type().as_str();
             let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -360,7 +361,7 @@ async fn run() -> Result<()> {
                     "operation_detail",
                     protocol,
                     &url,
-                    Some(&operation),
+                    Some(&detail.operation_id),
                     data,
                     Some(duration_ms),
                 ))?;
@@ -401,12 +402,12 @@ async fn run() -> Result<()> {
             }
         }
         EndpointCommand::Execute {
-            operation,
+            operation_id,
             args,
             json,
         } => {
             let args_map = parse_arguments(args, json)?;
-            let result = adapter.execute(&url, &operation, args_map).await?;
+            let result = adapter.execute(&url, &operation_id, args_map).await?;
             let protocol = adapter.protocol_type().as_str();
 
             if output_mode == OutputMode::Json {
@@ -414,7 +415,7 @@ async fn run() -> Result<()> {
                     "call_result",
                     protocol,
                     &url,
-                    Some(&operation),
+                    Some(&operation_id),
                     result.data,
                     Some(result.metadata.duration_ms),
                 ))?;
@@ -432,7 +433,7 @@ fn should_show_global_help(cli: &Cli) -> bool {
         return true;
     }
 
-    matches!(cli.command, Some(Commands::Help { operation: None })) && cli.url.is_none()
+    matches!(cli.command, Some(Commands::Help { operation_id: None })) && cli.url.is_none()
 }
 
 fn print_global_help() -> Result<()> {
@@ -446,22 +447,22 @@ fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
     match &cli.command {
         None => Ok(EndpointCommand::HostHelp),
         Some(Commands::List { verbose }) => Ok(EndpointCommand::List { verbose: *verbose }),
-        Some(Commands::Describe { operation }) => Ok(EndpointCommand::Describe {
-            operation: operation.clone(),
+        Some(Commands::Describe { operation_id }) => Ok(EndpointCommand::Describe {
+            operation_id: operation_id.clone(),
         }),
         Some(Commands::Help {
-            operation: Some(operation),
+            operation_id: Some(operation_id),
         }) => Ok(EndpointCommand::Describe {
-            operation: operation.clone(),
+            operation_id: operation_id.clone(),
         }),
-        Some(Commands::Help { operation: None }) => Ok(EndpointCommand::HostHelp),
+        Some(Commands::Help { operation_id: None }) => Ok(EndpointCommand::HostHelp),
         Some(Commands::Inspect { full }) => Ok(EndpointCommand::Inspect { full: *full }),
-        Some(Commands::Exec {
-            operation,
+        Some(Commands::Call {
+            operation_id,
             args,
             json,
         }) => Ok(EndpointCommand::Execute {
-            operation: operation.clone(),
+            operation_id: operation_id.clone(),
             args: args.clone(),
             json: json.clone(),
         }),
@@ -475,23 +476,23 @@ fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
 
 fn parse_external_command(tokens: &[String], global_help: bool) -> Result<EndpointCommand> {
     if tokens.is_empty() {
-        return Err(UxcError::InvalidArguments("Operation is required".to_string()).into());
+        return Err(UxcError::InvalidArguments("Operation ID is required".to_string()).into());
     }
 
-    let operation = tokens[0].clone();
+    let operation_id = tokens[0].clone();
 
     if global_help {
-        return Ok(EndpointCommand::Describe { operation });
+        return Ok(EndpointCommand::Describe { operation_id });
     }
 
     if tokens.len() >= 2 && tokens[1] == "help" {
         if tokens.len() > 2 {
             return Err(UxcError::InvalidArguments(
-                "Unexpected arguments after '<operation> help'".to_string(),
+                "Unexpected arguments after '<operation_id> help'".to_string(),
             )
             .into());
         }
-        return Ok(EndpointCommand::Describe { operation });
+        return Ok(EndpointCommand::Describe { operation_id });
     }
 
     let mut args = Vec::new();
@@ -501,7 +502,7 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
     while idx < tokens.len() {
         match tokens[idx].as_str() {
             "-h" | "--help" => {
-                return Ok(EndpointCommand::Describe { operation });
+                return Ok(EndpointCommand::Describe { operation_id });
             }
             "-a" | "--args" => {
                 idx += 1;
@@ -523,7 +524,7 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
             unknown => {
                 return Err(UxcError::InvalidArguments(format!(
                     "Unknown argument '{}' for operation '{}'. Use --json or --args",
-                    unknown, operation
+                    unknown, operation_id
                 ))
                 .into());
             }
@@ -533,7 +534,7 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
     }
 
     Ok(EndpointCommand::Execute {
-        operation,
+        operation_id,
         args,
         json: json_payload,
     })
@@ -621,16 +622,16 @@ fn print_host_help_text(protocol: &str, endpoint: &str, operations: &[Operation]
     println!("Available operations:");
     for op in operations {
         if let Some(desc) = &op.description {
-            println!("- {}: {}", op.name, desc);
+            println!("- {} ({}) : {}", op.display_name, op.operation_id, desc);
         } else {
-            println!("- {}", op.name);
+            println!("- {} ({})", op.display_name, op.operation_id);
         }
     }
     println!();
     println!("Next steps:");
     println!("  uxc {} list", endpoint);
-    println!("  uxc {} describe <operation>", endpoint);
-    println!("  uxc {} <operation> --json '{{...}}'", endpoint);
+    println!("  uxc {} describe <operation_id>", endpoint);
+    println!("  uxc {} call <operation_id> --json '{{...}}'", endpoint);
 }
 
 fn print_list_text(protocol: &str, operations: &[Operation], verbose: bool) {
@@ -640,7 +641,7 @@ fn print_list_text(protocol: &str, operations: &[Operation], verbose: bool) {
     }
 
     for op in operations {
-        println!("{}", op.name);
+        println!("{} ({})", op.display_name, op.operation_id);
         if verbose {
             if let Some(desc) = &op.description {
                 println!("  {}", desc);
@@ -663,7 +664,8 @@ fn print_list_text(protocol: &str, operations: &[Operation], verbose: bool) {
 fn print_detail_text(protocol: &str, endpoint: &str, detail: &OperationDetail) {
     println!("Protocol: {}", protocol);
     println!("Endpoint: {}", endpoint);
-    println!("Operation: {}", detail.name);
+    println!("Operation ID: {}", detail.operation_id);
+    println!("Display Name: {}", detail.display_name);
 
     if let Some(description) = &detail.description {
         println!("Description: {}", description);
@@ -707,11 +709,11 @@ fn to_operation_summary(protocol: &str, op: &Operation) -> OperationSummary {
     let protocol_kind = match protocol {
         "mcp" => "tool",
         "graphql" => {
-            if op.name.starts_with("query/") {
+            if op.operation_id.starts_with("query/") {
                 "query"
-            } else if op.name.starts_with("mutation/") {
+            } else if op.operation_id.starts_with("mutation/") {
                 "mutation"
-            } else if op.name.starts_with("subscription/") {
+            } else if op.operation_id.starts_with("subscription/") {
                 "subscription"
             } else {
                 "field"
@@ -730,7 +732,8 @@ fn to_operation_summary(protocol: &str, op: &Operation) -> OperationSummary {
     };
 
     OperationSummary {
-        name: op.name.clone(),
+        operation_id: op.operation_id.clone(),
+        display_name: op.display_name.clone(),
         summary: op.description.clone(),
         required,
         input_shape_hint,
