@@ -50,12 +50,12 @@ jobs:
       - name: Display coverage summary
         run: |
           echo "=== Coverage Summary ==="
-          cargo llvm-cov --all-features --workspace --summary-only
+          cargo llvm-cov --all-features --workspace --summary-only -- --test-threads=1
 
       - name: Check coverage threshold (65%)
         run: |
           echo "=== Checking Coverage Threshold ==="
-          cargo llvm-cov --all-features --workspace --summary-only --fail-under-lines 65
+          cargo llvm-cov --all-features --workspace --summary-only --fail-under-lines 65 -- --test-threads=1
           echo "✅ Coverage meets minimum threshold of 65%"
 
       - name: Upload coverage JSON report
