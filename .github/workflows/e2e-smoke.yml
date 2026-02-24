@@ -1,10 +1,14 @@
-name: E2E Smoke
+name: E2E Smoke Tests
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Run smoke tests daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # Allow manual triggering
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,6 +18,8 @@ jobs:
   smoke:
     name: Protocol E2E Smoke
     runs-on: ubuntu-latest
+    # Make smoke tests non-blocking for PRs (they still run but don't block merge)
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
 
     steps:
       - name: Checkout
@@ -48,67 +54,331 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          $UXC https://petstore3.swagger.io/api/v3 list \
-            | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .operation_id == "get:/store/inventory")'
-          $UXC https://petstore3.swagger.io/api/v3 get:/store/inventory \
-            | jq -e '.ok == true and .protocol == "openapi" and .kind == "call_result"'
+
+          echo "=== Testing OpenAPI endpoint: https://petstore3.swagger.io/api/v3 ==="
+
+          # List operations with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Listing operations..."
+            if OUTPUT=$($UXC https://petstore3.swagger.io/api/v3 list 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .operation_id == "get:/store/inventory")' >/dev/null; then
+                echo "✓ List operations succeeded"
+                break
+              else
+                echo "✗ List operations returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ List operations failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== OpenAPI list test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          # Call operation with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Calling get:/store/inventory..."
+            if OUTPUT=$($UXC https://petstore3.swagger.io/api/v3 get:/store/inventory 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "openapi" and .kind == "call_result"' >/dev/null; then
+                echo "✓ Call operation succeeded"
+                echo "Sample response:"
+                echo "$OUTPUT" | jq '.data | keys | .[0:3]'  # Show first 3 keys
+                break
+              else
+                echo "✗ Call operation returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ Call operation failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== OpenAPI call test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          echo "=== OpenAPI smoke tests passed ==="
 
       - name: GraphQL smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          for attempt in 1 2 3; do
-            if "$UXC" https://countries.trevorblades.com/ list \
-              | jq -e '.ok == true and any(.data.operations[]; .operation_id == "query/country")' >/dev/null; then
-              break
+
+          echo "=== Testing GraphQL endpoint: https://countries.trevorblades.com/ ==="
+
+          # List operations with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Listing operations..."
+            if OUTPUT=$($UXC https://countries.trevorblades.com/ list 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "query/country")' >/dev/null; then
+                echo "✓ List operations succeeded"
+                break
+              else
+                echo "✗ List operations returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ List operations failed with exit code $?:"
+              echo "$OUTPUT"
             fi
+
             if [[ "$attempt" -eq 3 ]]; then
-              echo "GraphQL list failed after retries"
+              echo "=== GraphQL list test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
             fi
-            sleep 2
+            echo "Retrying in 3 seconds..."
+            sleep 3
           done
 
-          for attempt in 1 2 3; do
-            if "$UXC" https://countries.trevorblades.com/ query/country --json '{"code":"US"}' \
-              | jq -e '.ok == true and .protocol == "graphql" and .kind == "call_result"'; then
-              break
+          # Call operation with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Calling query/country..."
+            if OUTPUT=$($UXC https://countries.trevorblades.com/ query/country --json '{"code":"US"}' 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "graphql" and .kind == "call_result"' >/dev/null; then
+                echo "✓ Call operation succeeded"
+                echo "Country data:"
+                echo "$OUTPUT" | jq '.data.data.country | {name, code, capital}'
+                break
+              else
+                echo "✗ Call operation returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ Call operation failed with exit code $?:"
+              echo "$OUTPUT"
             fi
+
             if [[ "$attempt" -eq 3 ]]; then
-              echo "GraphQL call failed after retries"
+              echo "=== GraphQL call test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
             fi
-            sleep 2
+            echo "Retrying in 3 seconds..."
+            sleep 3
           done
+
+          echo "=== GraphQL smoke tests passed ==="
 
       - name: gRPC smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          $UXC grpcb.in:9000 list \
-            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "addsvc.Add/Sum")'
-          $UXC grpcb.in:9000 addsvc.Add/Sum --json '{"a":1,"b":2}' \
-            | jq -e '.ok == true and .protocol == "grpc" and .data.v == "3"'
+
+          echo "=== Testing gRPC endpoint: grpcb.in:9000 ==="
+
+          # List operations with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Listing operations..."
+            if OUTPUT=$($UXC grpcb.in:9000 list 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "addsvc.Add/Sum")' >/dev/null; then
+                echo "✓ List operations succeeded"
+                break
+              else
+                echo "✗ List operations returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ List operations failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== gRPC list test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          # Call operation with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Calling addsvc.Add/Sum..."
+            if OUTPUT=$($UXC grpcb.in:9000 addsvc.Add/Sum --json '{"a":1,"b":2}' 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "grpc" and .data.v == "3"' >/dev/null; then
+                echo "✓ Call operation succeeded"
+                echo "Result: 1 + 2 = $($UXC grpcb.in:9000 addsvc.Add/Sum --json '{"a":1,"b":2}' | jq -r '.data.v')"
+                break
+              else
+                echo "✗ Call operation returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ Call operation failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== gRPC call test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          echo "=== gRPC smoke tests passed ==="
 
       - name: MCP HTTP smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          $UXC https://mcp.deepwiki.com/mcp list \
-            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "read_wiki_structure")'
-          $UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"jolestar/uxc"}' \
-            | jq -e '.ok == true and .protocol == "mcp"'
+
+          echo "=== Testing MCP HTTP endpoint: https://mcp.deepwiki.com/mcp ==="
+
+          # List operations with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Listing operations..."
+            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp list 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "read_wiki_structure")' >/dev/null; then
+                echo "✓ List operations succeeded"
+                break
+              else
+                echo "✗ List operations returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ List operations failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== MCP HTTP list test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          # Call operation with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Calling read_wiki_structure..."
+            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"jolestar/uxc"}' 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "mcp"' >/dev/null; then
+                echo "✓ Call operation succeeded"
+                break
+              else
+                echo "✗ Call operation returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ Call operation failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== MCP HTTP call test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          echo "=== MCP HTTP smoke tests passed ==="
 
       - name: MCP stdio smoke
         shell: bash
         run: |
           set -euo pipefail
           UXC=target/release/uxc
-          MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp'
-          "$UXC" "$MCP_STDIO" list \
-            | jq -e '.ok == true and any(.data.operations[]; .operation_id == "list_directory")'
-          "$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' \
-            | jq -e '.ok == true and .protocol == "mcp"'
+
+          echo "=== Testing MCP stdio with @modelcontextprotocol/server-filesystem ==="
+
+          # List operations with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Listing operations..."
+            if OUTPUT=$(MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp' "$UXC" "$MCP_STDIO" list 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "list_directory")' >/dev/null; then
+                echo "✓ List operations succeeded"
+                break
+              else
+                echo "✗ List operations returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ List operations failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== MCP stdio list test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          # Call operation with retry
+          for attempt in {1..3}; do
+            echo "Attempt $attempt/3: Calling list_directory..."
+            if OUTPUT=$(MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp' "$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "mcp"' >/dev/null; then
+                echo "✓ Call operation succeeded"
+                echo "Found $(echo "$OUTPUT" | jq '.data.data | length') entries in /tmp"
+                break
+              else
+                echo "✗ Call operation returned unexpected output:"
+                echo "$OUTPUT" | jq '.'
+              fi
+            else
+              echo "✗ Call operation failed with exit code $?:"
+              echo "$OUTPUT"
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "=== MCP stdio call test failed after 3 attempts ==="
+              echo "Last output:"
+              echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
+              exit 1
+            fi
+            echo "Retrying in 3 seconds..."
+            sleep 3
+          done
+
+          echo "=== MCP stdio smoke tests passed ==="
+
+      - name: Smoke tests summary
+        if: always()
+        run: |
+          echo "=== Smoke Tests Summary ==="
+          echo "All external service smoke tests have completed."
+          echo "These tests verify compatibility with real public APIs:"
+          echo "  - OpenAPI: https://petstore3.swagger.io/api/v3"
+          echo "  - GraphQL: https://countries.trevorblades.com/"
+          echo "  - gRPC: grpcb.in:9000"
+          echo "  - MCP HTTP: https://mcp.deepwiki.com/mcp"
+          echo "  - MCP stdio: @modelcontextprotocol/server-filesystem"
+          echo ""
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "ℹ️  Running on PR - failures are non-blocking (for compatibility monitoring only)"
+          else
+            echo "✅ Running on main branch - failures will block merge"
+          fi
