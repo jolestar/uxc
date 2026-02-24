@@ -721,6 +721,7 @@ fn to_operation_summary(protocol: &str, op: &Operation) -> OperationSummary {
         }
         "grpc" => "rpc",
         "openapi" => "http_operation",
+        "jsonrpc" => "rpc_method",
         _ => "operation",
     }
     .to_string();
@@ -903,6 +904,7 @@ fn inject_cache_if_supported(
         adapters::AdapterEnum::OpenAPI(a) => adapters::AdapterEnum::OpenAPI(a.with_cache(cache)),
         adapters::AdapterEnum::GraphQL(a) => adapters::AdapterEnum::GraphQL(a.with_cache(cache)),
         adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_cache(cache)),
+        adapters::AdapterEnum::JsonRpc(a) => adapters::AdapterEnum::JsonRpc(a.with_cache(cache)),
         adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_cache(cache)),
     }
 }
@@ -920,6 +922,9 @@ fn inject_auth_if_supported(
                 adapters::AdapterEnum::GraphQL(a.with_auth(profile))
             }
             adapters::AdapterEnum::GRpc(a) => adapters::AdapterEnum::GRpc(a.with_auth(profile)),
+            adapters::AdapterEnum::JsonRpc(a) => {
+                adapters::AdapterEnum::JsonRpc(a.with_auth(profile))
+            }
             adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_auth(profile)),
         },
         None => adapter,

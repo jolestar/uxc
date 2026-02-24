@@ -106,3 +106,28 @@ fn openapi_legacy_operation_format_is_rejected() {
         json["error"]["message"]
     );
 }
+
+#[test]
+fn generic_jsonrpc_endpoint_is_not_misdetected_as_mcp() {
+    let mut server = mockito::Server::new();
+    let _jsonrpc_error = server
+        .mock("POST", "/")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}"#,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("list")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(!output.status.success(), "command should fail");
+
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "PROTOCOL_DETECTION_FAILED");
+}

@@ -206,7 +206,20 @@ impl McpHttpTransport {
             .map(|s| s.to_string());
         let body = response.text().await.unwrap_or_default();
 
-        Ok(Self::parse_jsonrpc_response(content_type.as_deref(), &body).is_ok())
+        let response = match Self::parse_jsonrpc_response(content_type.as_deref(), &body) {
+            Ok(response) => response,
+            Err(_) => return Ok(false),
+        };
+
+        if response.error.is_some() {
+            return Ok(false);
+        }
+
+        let Some(result) = response.result else {
+            return Ok(false);
+        };
+
+        Ok(serde_json::from_value::<InitializeResult>(result).is_ok())
     }
 
     /// Initialize the MCP session

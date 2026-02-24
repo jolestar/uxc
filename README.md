@@ -22,6 +22,7 @@ Modern systems increasingly expose machine-readable schemas:
 * gRPC reflection
 * MCP (Model Context Protocol)
 * GraphQL introspection
+* JSON-RPC (OpenRPC discovery)
 * WSDL (SOAP)
 
 Yet interacting with them still requires:
@@ -84,6 +85,7 @@ UXC supports multiple schema-exposing protocols through adapters:
 * gRPC (with reflection)
 * MCP
 * GraphQL
+* JSON-RPC (with OpenRPC)
 * Extensible adapter system
 
 The CLI interface remains consistent across protocols.
@@ -189,6 +191,7 @@ UXC uses protocol-native, machine-friendly `operation_id` values:
 - gRPC: `Service/Method`
 - GraphQL: `query/viewer`, `mutation/addStar`, `subscription/onEvent`
 - MCP: tool name (e.g. `ask_question`)
+- JSON-RPC: method name (e.g. `eth_getBalance`, `net_version`)
 
 ### OpenAPI / REST APIs
 
@@ -249,6 +252,21 @@ uxc https://mcp-server.example.com call help --json '{}'
 uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list
 uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list_directory --json '{"path":"/tmp"}'
 ```
+
+### JSON-RPC (OpenRPC)
+
+```bash
+# Discover methods (requires rpc.discover or openrpc.json)
+uxc https://rpc.example.com list
+
+# Describe one method
+uxc https://rpc.example.com describe eth_getBalance
+
+# Execute a method
+uxc https://rpc.example.com eth_getBalance --json '{"address":"0xabc...","block":"latest"}'
+```
+
+Note: JSON-RPC support is OpenRPC-driven for predictable `list/describe` discovery.
 
 ## Public Test Endpoints (No API Key)
 
@@ -315,8 +333,9 @@ UXC determines the protocol via lightweight probing:
 1. Attempt MCP stdio/HTTP discovery
 2. Attempt GraphQL introspection
 3. Check OpenAPI endpoints
-4. Attempt gRPC reflection
-5. Fallback or fail gracefully
+4. Attempt JSON-RPC OpenRPC discovery
+5. Attempt gRPC reflection
+6. Fallback or fail gracefully
 
 Each protocol is handled by a dedicated adapter.
 
@@ -336,6 +355,7 @@ User / Skill / Agent
    ├── gRPC Adapter
    ├── MCP Adapter
    ├── GraphQL Adapter
+   ├── JSON-RPC Adapter
           ↓
      Remote Endpoint
 ```
@@ -410,6 +430,7 @@ UXC makes remote schema executable.
 - ✅ gRPC (with Server Reflection Protocol)
 - ✅ GraphQL (with Introspection)
 - ✅ MCP (Model Context Protocol) - HTTP & stdio transports
+- ✅ JSON-RPC (with OpenRPC discovery)
 
 **Platforms**:
 - ✅ Linux (x86_64)

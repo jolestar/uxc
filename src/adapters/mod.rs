@@ -8,6 +8,7 @@
 
 pub mod graphql;
 pub mod grpc;
+pub mod jsonrpc;
 pub mod mcp;
 pub mod openapi;
 
@@ -23,6 +24,7 @@ use std::collections::HashMap;
 pub enum AdapterEnum {
     OpenAPI(openapi::OpenAPIAdapter),
     GRpc(grpc::GrpcAdapter),
+    JsonRpc(jsonrpc::JsonRpcAdapter),
     Mcp(mcp::McpAdapter),
     GraphQL(graphql::GraphQLAdapter),
 }
@@ -33,6 +35,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(_) => ProtocolType::OpenAPI,
             AdapterEnum::GRpc(_) => ProtocolType::GRpc,
+            AdapterEnum::JsonRpc(_) => ProtocolType::JsonRpc,
             AdapterEnum::Mcp(_) => ProtocolType::Mcp,
             AdapterEnum::GraphQL(_) => ProtocolType::GraphQL,
         }
@@ -42,6 +45,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(a) => a.can_handle(url).await,
             AdapterEnum::GRpc(a) => a.can_handle(url).await,
+            AdapterEnum::JsonRpc(a) => a.can_handle(url).await,
             AdapterEnum::Mcp(a) => a.can_handle(url).await,
             AdapterEnum::GraphQL(a) => a.can_handle(url).await,
         }
@@ -51,6 +55,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(a) => a.fetch_schema(url).await,
             AdapterEnum::GRpc(a) => a.fetch_schema(url).await,
+            AdapterEnum::JsonRpc(a) => a.fetch_schema(url).await,
             AdapterEnum::Mcp(a) => a.fetch_schema(url).await,
             AdapterEnum::GraphQL(a) => a.fetch_schema(url).await,
         }
@@ -60,6 +65,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(a) => a.list_operations(url).await,
             AdapterEnum::GRpc(a) => a.list_operations(url).await,
+            AdapterEnum::JsonRpc(a) => a.list_operations(url).await,
             AdapterEnum::Mcp(a) => a.list_operations(url).await,
             AdapterEnum::GraphQL(a) => a.list_operations(url).await,
         }
@@ -69,6 +75,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(a) => a.describe_operation(url, operation).await,
             AdapterEnum::GRpc(a) => a.describe_operation(url, operation).await,
+            AdapterEnum::JsonRpc(a) => a.describe_operation(url, operation).await,
             AdapterEnum::Mcp(a) => a.describe_operation(url, operation).await,
             AdapterEnum::GraphQL(a) => a.describe_operation(url, operation).await,
         }
@@ -83,6 +90,7 @@ impl Adapter for AdapterEnum {
         match self {
             AdapterEnum::OpenAPI(a) => a.execute(url, operation, args).await,
             AdapterEnum::GRpc(a) => a.execute(url, operation, args).await,
+            AdapterEnum::JsonRpc(a) => a.execute(url, operation, args).await,
             AdapterEnum::Mcp(a) => a.execute(url, operation, args).await,
             AdapterEnum::GraphQL(a) => a.execute(url, operation, args).await,
         }
@@ -95,6 +103,7 @@ impl Adapter for AdapterEnum {
 pub enum ProtocolType {
     OpenAPI,
     GRpc,
+    JsonRpc,
     Mcp,
     GraphQL,
 }
@@ -104,6 +113,7 @@ impl ProtocolType {
         match self {
             ProtocolType::OpenAPI => "openapi",
             ProtocolType::GRpc => "grpc",
+            ProtocolType::JsonRpc => "jsonrpc",
             ProtocolType::Mcp => "mcp",
             ProtocolType::GraphQL => "graphql",
         }
@@ -208,6 +218,12 @@ impl ProtocolDetector {
         let openapi_adapter = openapi::OpenAPIAdapter::new();
         if openapi_adapter.can_handle(url).await? {
             return Ok(AdapterEnum::OpenAPI(openapi_adapter));
+        }
+
+        // Try JSON-RPC (OpenRPC discovery)
+        let jsonrpc_adapter = jsonrpc::JsonRpcAdapter::new();
+        if jsonrpc_adapter.can_handle(url).await? {
+            return Ok(AdapterEnum::JsonRpc(jsonrpc_adapter));
         }
 
         // Try gRPC (less reliable detection, try last)
