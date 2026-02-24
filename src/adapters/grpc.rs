@@ -801,7 +801,13 @@ impl GrpcAdapter {
         for plaintext in attempts {
             let result = self
                 .grpcurl_executor
-                .execute(plaintext, headers.clone(), &request_json, target, full_method)
+                .execute(
+                    plaintext,
+                    headers.clone(),
+                    &request_json,
+                    target,
+                    full_method,
+                )
                 .await?;
 
             if result.success {
@@ -1441,7 +1447,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(err.to_string().contains("grpcurl failed without stderr output"));
+        assert!(err
+            .to_string()
+            .contains("grpcurl failed without stderr output"));
     }
 
     #[tokio::test]

@@ -3,11 +3,11 @@
 //! Tests that CLI failures return structured JSON error envelopes
 
 use assert_cmd::Command;
-use predicates::prelude::*;
 use mockito::Server;
+use predicates::prelude::*;
 
 fn uxc() -> Command {
-    Command::cargo_bin("uxc").unwrap()
+    Command::new(assert_cmd::cargo::cargo_bin!("uxc"))
 }
 
 #[test]
@@ -45,11 +45,7 @@ fn operation_execution_failure_uses_error_envelope() {
         .create();
 
     // Call without operation should succeed
-    uxc()
-        .arg(server.url())
-        .arg("list")
-        .assert()
-        .success();
+    uxc().arg(server.url()).arg("list").assert().success();
 
     // Call with non-existent operation should fail with error envelope
     uxc()

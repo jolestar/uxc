@@ -212,6 +212,7 @@ UXC uses protocol-native, machine-friendly `operation_id` values:
 ```bash
 # List available operations
 uxc https://api.example.com list
+uxc petstore3.swagger.io/api/v3 list  # scheme can be omitted for common HTTP targets
 
 # Schema-separated service: runtime endpoint and schema URL are different
 uxc https://api.github.com list \

@@ -4,9 +4,18 @@ fn uxc_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_uxc"))
 }
 
+fn without_http_scheme(url: &str) -> String {
+    url.trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .to_string()
+}
+
 #[test]
 fn bare_invocation_outputs_json_global_help() {
-    let output = uxc_command().arg("help").output().expect("failed to run uxc");
+    let output = uxc_command()
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
 
     assert!(output.status.success(), "command should succeed");
     let json: serde_json::Value =
@@ -104,6 +113,92 @@ fn operation_help_works_with_dynamic_syntax() {
     assert_eq!(json["operation"], "get:/pets");
     assert_eq!(json["data"]["operation_id"], "get:/pets");
     assert_eq!(json["data"]["display_name"], "GET /pets");
+}
+
+#[test]
+fn host_help_supports_url_without_scheme() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(without_http_scheme(&server.url()))
+        .arg("--no-cache")
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(
+        output.status.success(),
+        "command should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "host_help");
+}
+
+#[test]
+fn operation_help_supports_url_without_scheme() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(without_http_scheme(&server.url()))
+        .arg("--no-cache")
+        .arg("get:/pets")
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(
+        output.status.success(),
+        "command should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "operation_detail");
+    assert_eq!(json["operation"], "get:/pets");
 }
 
 #[test]
@@ -420,6 +515,7 @@ fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
 
     let mapping_file_dir = tempfile::tempdir().expect("failed to create tempdir");
     let mapping_file_path = mapping_file_dir.path().join("schema_mappings.json");
+    let schema_url = format!("{}/schema.json", schema_server.url());
     std::fs::write(
         &mapping_file_path,
         format!(
@@ -434,7 +530,7 @@ fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
     }}
   ]
 }}"#,
-            schema_url = format!("{}/schema.json", schema_server.url())
+            schema_url = schema_url
         ),
     )
     .expect("failed to write schema mapping file");

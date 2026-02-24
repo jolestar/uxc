@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tracing::info;
 
 mod adapters;
@@ -406,6 +407,73 @@ fn normalize_global_args(raw_args: Vec<String>) -> Vec<String> {
     normalized
 }
 
+fn normalize_endpoint_url(input: &str) -> String {
+    match infer_scheme_for_endpoint(input) {
+        Some(scheme) => format!("{}://{}", scheme, input),
+        None => input.to_string(),
+    }
+}
+
+fn infer_scheme_for_endpoint(input: &str) -> Option<&'static str> {
+    if input.is_empty()
+        || input.contains("://")
+        || input.chars().any(char::is_whitespace)
+        || input.starts_with('-')
+        || input.starts_with('/')
+        || input.starts_with("./")
+        || input.starts_with("../")
+        || input.starts_with('~')
+        || input.contains('\\')
+        || looks_like_operation_id(input)
+    {
+        return None;
+    }
+
+    let parsed = url::Url::parse(&format!("http://{}", input)).ok()?;
+    let host = parsed.host_str()?;
+    let is_ip = host.parse::<IpAddr>().is_ok();
+    let is_local = host.eq_ignore_ascii_case("localhost") || host.ends_with(".local");
+    let has_dot = host.contains('.');
+
+    // Keep short single-segment tokens unchanged (e.g. operation IDs or aliases).
+    if !(has_dot || is_local || is_ip) {
+        return None;
+    }
+
+    let has_non_root_path = parsed.path() != "/";
+    let has_explicit_port = parsed.port().is_some();
+
+    // host:port without path is ambiguous (could be gRPC/MCP/http); require explicit scheme.
+    if has_explicit_port && !has_non_root_path && !is_local && !is_ip {
+        return None;
+    }
+
+    if is_local || is_ip {
+        Some("http")
+    } else {
+        Some("https")
+    }
+}
+
+fn looks_like_operation_id(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    [
+        "get:/",
+        "post:/",
+        "put:/",
+        "patch:/",
+        "delete:/",
+        "head:/",
+        "options:/",
+        "trace:/",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+        || lower.starts_with("query/")
+        || lower.starts_with("mutation/")
+        || lower.starts_with("subscription/")
+}
+
 async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
     if should_show_global_help(cli) {
         return global_help_envelope();
@@ -436,7 +504,8 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
     let url = cli
         .url
         .clone()
-        .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))?;
+        .ok_or_else(|| UxcError::InvalidArguments("URL is required".to_string()))
+        .map(|raw| normalize_endpoint_url(&raw))?;
 
     info!("UXC v0.1.0 - connecting to {}", url);
 
@@ -446,7 +515,7 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
 
     let detector = ProtocolDetector::new();
     let detection_options = DetectionOptions {
-        schema_url: cli.schema_url.clone(),
+        schema_url: cli.schema_url.as_deref().map(normalize_endpoint_url),
     };
     let mut adapter = detector
         .detect_adapter_with_options(&url, &detection_options)
@@ -1274,5 +1343,50 @@ fn inject_auth_if_supported(
             adapters::AdapterEnum::Mcp(a) => adapters::AdapterEnum::Mcp(a.with_auth(profile)),
         },
         None => adapter,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{infer_scheme_for_endpoint, normalize_endpoint_url};
+
+    #[test]
+    fn infer_scheme_for_public_host() {
+        assert_eq!(
+            normalize_endpoint_url("petstore3.swagger.io/api/v3"),
+            "https://petstore3.swagger.io/api/v3"
+        );
+        assert_eq!(
+            normalize_endpoint_url("petstore3.swagger.io"),
+            "https://petstore3.swagger.io"
+        );
+    }
+
+    #[test]
+    fn infer_http_for_local_hosts() {
+        assert_eq!(
+            normalize_endpoint_url("localhost:8080/graphql"),
+            "http://localhost:8080/graphql"
+        );
+        assert_eq!(
+            normalize_endpoint_url("127.0.0.1:8080"),
+            "http://127.0.0.1:8080"
+        );
+    }
+
+    #[test]
+    fn keep_explicit_or_non_http_targets_unchanged() {
+        assert_eq!(
+            normalize_endpoint_url("https://petstore3.swagger.io/api/v3"),
+            "https://petstore3.swagger.io/api/v3"
+        );
+        assert_eq!(normalize_endpoint_url("mcp://server"), "mcp://server");
+        assert_eq!(normalize_endpoint_url("post:/pet"), "post:/pet");
+        assert_eq!(normalize_endpoint_url("query/viewer"), "query/viewer");
+    }
+
+    #[test]
+    fn skip_ambiguous_host_port_without_path() {
+        assert_eq!(infer_scheme_for_endpoint("grpcb.in:9000"), None);
     }
 }
