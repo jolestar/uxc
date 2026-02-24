@@ -53,11 +53,11 @@ struct Cli {
     cache_ttl: Option<u64>,
 
     /// Output format (default: json)
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json, global = true)]
-    format: OutputFormat,
+    #[arg(long, value_enum, global = true)]
+    format: Option<OutputFormat>,
 
     /// Use human-readable text output
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "format")]
     text: bool,
 
     /// Remote endpoint URL (not used with 'cache'/'auth' subcommands)
@@ -108,6 +108,21 @@ enum Commands {
     Auth {
         #[command(subcommand)]
         auth_command: AuthCommands,
+    },
+
+    /// Execute an operation explicitly (escape hatch for reserved operation names)
+    Exec {
+        /// Operation name (e.g., "help", "list", "GET /users/{id}")
+        #[arg(value_name = "OPERATION")]
+        operation: String,
+
+        /// Key-value arguments (e.g., "id=42")
+        #[arg(short, long)]
+        args: Vec<String>,
+
+        /// JSON input payload
+        #[arg(long)]
+        json: Option<String>,
     },
 
     /// Dynamic operation execution: `uxc <url> <operation> [--json ...] [--args k=v]`
@@ -227,7 +242,7 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
-    let output_mode = if cli.text || cli.format == OutputFormat::Text {
+    let output_mode = if cli.text || cli.format == Some(OutputFormat::Text) {
         OutputMode::Text
     } else {
         OutputMode::Json
@@ -268,7 +283,7 @@ async fn run() -> Result<()> {
     info!("UXC v0.1.0 - connecting to {}", url);
 
     let endpoint_command = resolve_endpoint_command(&cli)?;
-    let auth_profile = load_auth_profile(cli.profile, &endpoint_command)?;
+    let auth_profile = load_auth_profile(cli.profile)?;
     let cache = cache::create_cache(cache_config)?;
 
     let detector = ProtocolDetector::new();
@@ -441,6 +456,15 @@ fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
         }),
         Some(Commands::Help { operation: None }) => Ok(EndpointCommand::HostHelp),
         Some(Commands::Inspect { full }) => Ok(EndpointCommand::Inspect { full: *full }),
+        Some(Commands::Exec {
+            operation,
+            args,
+            json,
+        }) => Ok(EndpointCommand::Execute {
+            operation: operation.clone(),
+            args: args.clone(),
+            json: json.clone(),
+        }),
         Some(Commands::External(tokens)) => parse_external_command(tokens, cli.help),
         Some(Commands::Cache { .. }) | Some(Commands::Auth { .. }) => Err(
             UxcError::InvalidArguments("Internal routing error for cache/auth command".to_string())
@@ -545,14 +569,7 @@ fn parse_arguments(
     Ok(args_map)
 }
 
-fn load_auth_profile(
-    cli_profile: Option<String>,
-    endpoint_command: &EndpointCommand,
-) -> Result<Option<Profile>> {
-    if matches!(endpoint_command, EndpointCommand::Inspect { .. }) {
-        // Inspect may still need auth, so fallthrough.
-    }
-
+fn load_auth_profile(cli_profile: Option<String>) -> Result<Option<Profile>> {
     let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli_profile {
         (profile, true)
     } else if let Ok(profile) = std::env::var("UXC_PROFILE") {

@@ -100,7 +100,7 @@ The CLI interface remains consistent across protocols.
   "kind": "call_result",
   "protocol": "openapi",
   "endpoint": "https://api.example.com",
-  "operation": "user.get",
+  "operation": "GET /users/{id}",
   "data": { ... },
   "meta": {
     "version": "v1",
@@ -125,6 +125,12 @@ Command failures are structured and predictable:
 ```
 
 Use `--text` (or `--format text`) for human-readable output.
+
+If an operation name conflicts with a CLI keyword (for example `help`/`list`), use:
+
+```bash
+uxc <host> exec <operation> [--json '{...}']
+```
 
 This makes UXC ideal for:
 
