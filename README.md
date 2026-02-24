@@ -3,6 +3,7 @@
 **Universal X-Protocol Call**
 
 [![CI](https://github.com/jolestar/uxc/workflows/CI/badge.svg)](https://github.com/jolestar/uxc/actions)
+[![Coverage](https://github.com/jolestar/uxc/workflows/Coverage/badge.svg)](https://github.com/jolestar/uxc/actions/workflows/coverage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -495,6 +496,14 @@ UXC makes remote schema executable.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
+
+**Development Requirements**:
+- All code must be formatted with `cargo fmt`
+- No clippy warnings allowed
+- Minimum 65% code coverage required
+- All tests must pass
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development workflow, testing guidelines, and coverage instructions.
 
 **Areas of Interest**:
 - Connection pooling

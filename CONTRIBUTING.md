@@ -179,7 +179,7 @@ Technical approach
 Maintainers will review PRs within 48 hours.
 Feel free to ping after 3 days if no response.
 
-## Testing
+## Testing & Coverage
 
 ### Unit Tests
 
@@ -192,6 +192,53 @@ cargo test
 ```bash
 cargo test --test '*'
 ```
+
+### Code Coverage
+
+We track code coverage using `cargo-llvm-cov` and enforce a minimum of 65% line coverage.
+
+#### Generate Coverage Report Locally
+
+To generate coverage reports locally (matching CI behavior):
+
+```bash
+# Install cargo-llvm-cov if you haven't already
+cargo install cargo-llvm-cov
+
+# Generate HTML report
+cargo llvm-cov --html
+
+# Generate coverage summary only
+cargo llvm-cov --summary-only
+
+# Open HTML report in browser
+open target/llvm-cov/html/index.html  # macOS
+xdg-open target/llvm-cov/html/index.html  # Linux
+start target/llvm-cov/html/index.html  # Windows
+```
+
+#### Coverage Threshold
+
+CI enforces a minimum of 65% line coverage. The CI workflow will fail if coverage falls below this threshold.
+
+To check if your code meets the threshold locally:
+
+```bash
+cargo llvm-cov --summary-only --fail-under-lines 65
+```
+
+This command will:
+1. Run all tests with coverage instrumentation
+2. Display coverage summary
+3. Exit with error if coverage is below 65%
+
+#### CI Coverage Artifacts
+
+GitHub Actions generates and uploads coverage artifacts on every PR and push to main:
+- **JSON Report**: Machine-readable coverage data (`coverage.json`)
+- **HTML Report**: Detailed browser-friendly coverage report
+
+Download these artifacts from the Actions run page to review coverage in detail.
 
 ### Manual Testing
 
