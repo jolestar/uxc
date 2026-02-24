@@ -420,7 +420,7 @@ impl GraphQLAdapter {
             .find(|field| field.get("name").and_then(|n| n.as_str()) == Some(field_name))
     }
 
-    fn build_type_index<'a>(schema: &'a Value) -> HashMap<String, &'a Value> {
+    fn build_type_index(schema: &Value) -> HashMap<String, &Value> {
         let mut type_index = HashMap::new();
         if let Some(types) = schema
             .get("data")
@@ -450,9 +450,9 @@ impl GraphQLAdapter {
         }
     }
 
-    fn graphql_type_to_input_schema<'a>(
+    fn graphql_type_to_input_schema(
         type_info: &Value,
-        type_index: &HashMap<String, &'a Value>,
+        type_index: &HashMap<String, &Value>,
         visiting: &mut HashSet<String>,
         depth: usize,
     ) -> (Value, bool) {
