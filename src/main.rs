@@ -312,13 +312,6 @@ fn render_error(err: &anyhow::Error, output_mode: OutputMode) {
 }
 
 async fn run(args: Vec<String>) -> Result<()> {
-    // If no arguments provided, show help
-    if args.len() == 1 {
-        // Only the program name itself
-        Cli::try_parse_from(["uxc", "--help"].into_iter())?;
-        return Ok(());
-    }
-
     let cli = Cli::parse_from(args);
     let output_mode = resolve_output_mode(&cli);
     let envelope = execute_cli(&cli).await?;
