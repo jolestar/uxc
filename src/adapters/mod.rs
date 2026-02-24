@@ -195,6 +195,12 @@ pub trait Adapter: Send + Sync {
 /// Protocol detector - attempts to identify the protocol type
 pub struct ProtocolDetector;
 
+/// Optional settings that affect protocol detection.
+#[derive(Debug, Clone, Default)]
+pub struct DetectionOptions {
+    pub schema_url: Option<String>,
+}
+
 impl ProtocolDetector {
     pub fn new() -> Self {
         Self
@@ -202,6 +208,16 @@ impl ProtocolDetector {
 
     /// Get adapter for a URL (auto-detects protocol)
     pub async fn detect_adapter(&self, url: &str) -> Result<AdapterEnum> {
+        self.detect_adapter_with_options(url, &DetectionOptions::default())
+            .await
+    }
+
+    /// Get adapter for a URL using explicit detection options.
+    pub async fn detect_adapter_with_options(
+        &self,
+        url: &str,
+        options: &DetectionOptions,
+    ) -> Result<AdapterEnum> {
         // Try MCP first (stdio commands are distinct)
         let mcp_adapter = mcp::McpAdapter::new();
         if mcp_adapter.can_handle(url).await? {
@@ -215,7 +231,8 @@ impl ProtocolDetector {
         }
 
         // Try OpenAPI
-        let openapi_adapter = openapi::OpenAPIAdapter::new();
+        let openapi_adapter =
+            openapi::OpenAPIAdapter::new().with_schema_url_override(options.schema_url.clone());
         if openapi_adapter.can_handle(url).await? {
             return Ok(AdapterEnum::OpenAPI(openapi_adapter));
         }

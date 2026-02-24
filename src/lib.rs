@@ -10,6 +10,7 @@ pub mod cache;
 pub mod error;
 pub mod output;
 pub mod protocol;
+pub mod schema_mapping;
 
 pub use adapters::{Adapter, ProtocolType};
 pub use cache::{create_cache, create_default_cache, Cache, CacheConfig, CacheResult};

@@ -312,3 +312,151 @@ fn list_outputs_operation_id_and_display_name() {
     assert_eq!(first["operation_id"], "get:/pets");
     assert_eq!(first["display_name"], "GET /pets");
 }
+
+#[test]
+fn schema_url_override_supports_schema_separated_openapi_service() {
+    let mut target_server = mockito::Server::new();
+    let _call = target_server
+        .mock("GET", "/pets")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"items":[]}"#)
+        .create();
+
+    let mut schema_server = mockito::Server::new();
+    let _schema = schema_server
+        .mock("GET", "/schema.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "separated", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"#,
+        )
+        .create();
+    let schema_url = format!("{}/schema.json", schema_server.url());
+
+    let list_output = uxc_command()
+        .arg(target_server.url())
+        .arg("--no-cache")
+        .arg("--schema-url")
+        .arg(&schema_url)
+        .arg("list")
+        .output()
+        .expect("failed to run uxc list");
+    assert!(
+        list_output.status.success(),
+        "list should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&list_output.stdout),
+        String::from_utf8_lossy(&list_output.stderr)
+    );
+    let list_json: serde_json::Value =
+        serde_json::from_slice(&list_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(list_json["protocol"], "openapi");
+    assert!(list_json["data"]["operations"]
+        .as_array()
+        .is_some_and(|ops| { ops.iter().any(|op| op["operation_id"] == "get:/pets") }));
+
+    let call_output = uxc_command()
+        .arg(target_server.url())
+        .arg("--no-cache")
+        .arg("--schema-url")
+        .arg(&schema_url)
+        .arg("call")
+        .arg("get:/pets")
+        .output()
+        .expect("failed to run uxc call");
+    assert!(
+        call_output.status.success(),
+        "call should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&call_output.stdout),
+        String::from_utf8_lossy(&call_output.stderr)
+    );
+    let call_json: serde_json::Value =
+        serde_json::from_slice(&call_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(call_json["ok"], true);
+    assert_eq!(call_json["kind"], "call_result");
+}
+
+#[test]
+fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
+    let mut target_server = mockito::Server::new();
+    let _call = target_server
+        .mock("GET", "/pets")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"items":[]}"#)
+        .create();
+
+    let mut schema_server = mockito::Server::new();
+    let _schema = schema_server
+        .mock("GET", "/schema.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "mapped", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"#,
+        )
+        .create();
+
+    let mapping_file_dir = tempfile::tempdir().expect("failed to create tempdir");
+    let mapping_file_path = mapping_file_dir.path().join("schema_mappings.json");
+    std::fs::write(
+        &mapping_file_path,
+        format!(
+            r#"{{
+  "version": 1,
+  "openapi": [
+    {{
+      "host": "127.0.0.1",
+      "path_prefix": "/",
+      "schema_url": "{schema_url}",
+      "priority": 100
+    }}
+  ]
+}}"#,
+            schema_url = format!("{}/schema.json", schema_server.url())
+        ),
+    )
+    .expect("failed to write schema mapping file");
+
+    let list_output = uxc_command()
+        .arg(target_server.url())
+        .arg("--no-cache")
+        .arg("list")
+        .env("UXC_SCHEMA_MAPPINGS_FILE", &mapping_file_path)
+        .output()
+        .expect("failed to run uxc list");
+    assert!(
+        list_output.status.success(),
+        "list should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&list_output.stdout),
+        String::from_utf8_lossy(&list_output.stderr)
+    );
+
+    let list_json: serde_json::Value =
+        serde_json::from_slice(&list_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(list_json["protocol"], "openapi");
+    assert!(list_json["data"]["operations"]
+        .as_array()
+        .is_some_and(|ops| { ops.iter().any(|op| op["operation_id"] == "get:/pets") }));
+}
