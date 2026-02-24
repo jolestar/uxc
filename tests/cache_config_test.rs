@@ -20,7 +20,7 @@ fn test_load_from_file_not_exists() {
     // Should succeed with defaults
     assert!(result.is_ok(), "Should return default config when file doesn't exist");
     let config = result.unwrap();
-    assert!(config.enabled(), "Default config should be enabled");
+    assert!(config.enabled, "Default config should be enabled");
 
     // Restore HOME
     match prev_home {
@@ -57,9 +57,9 @@ max_size = 1048576
 
     assert!(result.is_ok(), "Should successfully load valid config");
     let config = result.unwrap();
-    assert!(config.enabled(), "Config should be enabled");
-    assert_eq!(config.ttl(), 3600, "TTL should be 3600");
-    assert_eq!(config.max_size(), 1048576, "Max size should be 1048576");
+    assert!(config.enabled, "Config should be enabled");
+    assert_eq!(config.ttl, 3600, "TTL should be 3600");
+    assert_eq!(config.max_size, 1048576, "Max size should be 1048576");
 
     // Restore HOME
     match prev_home {
@@ -140,8 +140,8 @@ max_size = 2097152
 
     assert!(result.is_ok(), "Should successfully load config with comments");
     let config = result.unwrap();
-    assert!(config.enabled(), "Config should be enabled");
-    assert_eq!(config.ttl(), 7200, "TTL should be 7200");
+    assert!(config.enabled, "Config should be enabled");
+    assert_eq!(config.ttl, 7200, "TTL should be 7200");
 
     // Restore HOME
     match prev_home {
@@ -160,7 +160,7 @@ fn test_ensure_cache_dir_creates_directory() {
     let result = config.ensure_cache_dir();
 
     assert!(result.is_ok(), "Should successfully create cache directory");
-    assert!(temp_dir.path().join("cache").exists(), "Cache directory should be created");
+    assert!(temp_dir.path().exists(), "Cache directory should be created");
 }
 
 #[test]

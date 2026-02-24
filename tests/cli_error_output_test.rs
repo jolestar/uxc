@@ -3,7 +3,7 @@
 //! Tests that CLI failures return structured JSON error envelopes
 
 use assert_cmd::Command;
-use assert_cmd::predicates;
+use predicates::prelude::*;
 use mockito::Server;
 
 fn uxc() -> Command {
@@ -17,8 +17,8 @@ fn protocol_detection_failure_uses_error_envelope() {
         .arg("list")
         .assert()
         .failure()
-        .stdout(predicates::str::is_empty())
-        .stderr(predicates::str::contains("PROTOCOL_DETECTION_FAILED"));
+        .stdout(predicates::str::contains("PROTOCOL_DETECTION_FAILED"))
+        .stderr(predicates::str::is_empty());
 }
 
 #[test]

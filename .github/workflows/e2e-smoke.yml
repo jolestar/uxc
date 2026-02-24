@@ -307,13 +307,14 @@ jobs:
         run: |
           set -euo pipefail
           UXC=target/release/uxc
+          MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp'
 
           echo "=== Testing MCP stdio with @modelcontextprotocol/server-filesystem ==="
 
           # List operations with retry
           for attempt in {1..3}; do
             echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$(MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp' "$UXC" "$MCP_STDIO" list 2>&1); then
+            if OUTPUT=$("$UXC" "$MCP_STDIO" list 2>&1); then
               if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "list_directory")' >/dev/null; then
                 echo "✓ List operations succeeded"
                 break
@@ -339,7 +340,7 @@ jobs:
           # Call operation with retry
           for attempt in {1..3}; do
             echo "Attempt $attempt/3: Calling list_directory..."
-            if OUTPUT=$(MCP_STDIO='npx -y @modelcontextprotocol/server-filesystem /tmp' "$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' 2>&1); then
+            if OUTPUT=$("$UXC" "$MCP_STDIO" list_directory --json '{"path":"/tmp"}' 2>&1); then
               if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "mcp"' >/dev/null; then
                 echo "✓ Call operation succeeded"
                 echo "Found $(echo "$OUTPUT" | jq '.data.data | length') entries in /tmp"
