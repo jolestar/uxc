@@ -2,8 +2,8 @@
 
 **Universal X-Protocol Call**
 
-[![CI](https://github.com/jolestar/uxc/workflows/CI/badge.svg)](https://github.com/jolestar/uxc/actions)
-[![Coverage](https://github.com/jolestar/uxc/workflows/Coverage/badge.svg)](https://github.com/jolestar/uxc/actions/workflows/coverage.yml)
+[![CI](https://github.com/holon-run/uxc/workflows/CI/badge.svg)](https://github.com/holon-run/uxc/actions)
+[![Coverage](https://github.com/holon-run/uxc/workflows/Coverage/badge.svg)](https://github.com/holon-run/uxc/actions/workflows/coverage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -211,20 +211,20 @@ Logs are written to stderr to avoid interfering with JSON output on stdout.
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew tap jolestar/homebrew-uxc
+brew tap holon-run/homebrew-tap
 brew install uxc
 ```
 
 ### Install Script (macOS/Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash
 ```
 
 If you prefer to review before execution:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh -o install-uxc.sh
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh -o install-uxc.sh
 less install-uxc.sh
 bash install-uxc.sh
 ```
@@ -232,7 +232,7 @@ bash install-uxc.sh
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jolestar/uxc/main/scripts/install.sh | bash -s -- -v v0.1.0
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash -s -- -v v0.1.1
 ```
 
 ### Cargo
@@ -244,7 +244,7 @@ cargo install uxc
 ### From Source
 
 ```bash
-git clone https://github.com/jolestar/uxc.git
+git clone https://github.com/holon-run/uxc.git
 cd uxc
 cargo install --path .
 ```

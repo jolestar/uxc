@@ -277,7 +277,7 @@ jobs:
           # Call operation with retry
           for attempt in {1..3}; do
             echo "Attempt $attempt/3: Calling read_wiki_structure..."
-            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"jolestar/uxc"}' 2>&1); then
+            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp read_wiki_structure --json '{"repoName":"holon-run/uxc"}' 2>&1); then
               if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "mcp"' >/dev/null; then
                 echo "✓ Call operation succeeded"
                 break

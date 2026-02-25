@@ -5,7 +5,7 @@ set -euo pipefail
 VERSION=""
 DIST_DIR=""
 REPO=""
-TAP_REPO="jolestar/homebrew-uxc"
+TAP_REPO="holon-run/homebrew-tap"
 TAP_BRANCH="main"
 
 usage() {
@@ -16,7 +16,7 @@ Usage:
   update-homebrew-formula.sh --version <x.y.z> --dist-dir <path> --repo <owner/repo> [--tap-repo <owner/repo>] [--tap-branch <branch>]
 
 Environment:
-  HOMEBREW_TAP_GITHUB_TOKEN  GitHub token with write access to tap repository
+  HOMEBREW_TAP_TOKEN  GitHub token with write access to tap repository
 USAGE
 }
 
@@ -86,7 +86,7 @@ render_formula() {
   cat <<EOF
 class Uxc < Formula
   desc "Universal X-Protocol Call"
-  homepage "https://github.com/jolestar/uxc"
+  homepage "https://github.com/${repo}"
   license "MIT"
   version "${version}"
 
@@ -136,7 +136,8 @@ main() {
   [[ -n "${DIST_DIR}" ]] || fail "--dist-dir is required"
   [[ -n "${REPO}" ]] || fail "--repo is required"
   [[ -d "${DIST_DIR}" ]] || fail "dist dir not found: ${DIST_DIR}"
-  [[ -n "${HOMEBREW_TAP_GITHUB_TOKEN:-}" ]] || fail "HOMEBREW_TAP_GITHUB_TOKEN is not set"
+  local tap_token="${HOMEBREW_TAP_TOKEN:-${HOMEBREW_TAP_GITHUB_TOKEN:-}}"
+  [[ -n "${tap_token}" ]] || fail "HOMEBREW_TAP_TOKEN is not set"
 
   local mac_arm_sha mac_x64_sha linux_arm_sha linux_x64_sha
   mac_arm_sha="$(checksum_for "uxc-v${VERSION}-aarch64-apple-darwin.tar.gz")"
@@ -157,7 +158,7 @@ case "$1" in
     echo "x-access-token"
     ;;
   *Password*)
-    echo "${HOMEBREW_TAP_GITHUB_TOKEN}"
+    echo "${HOMEBREW_TAP_TOKEN:-${HOMEBREW_TAP_GITHUB_TOKEN:-}}"
     ;;
 esac
 EOF

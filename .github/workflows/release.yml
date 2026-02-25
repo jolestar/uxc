@@ -191,14 +191,14 @@ jobs:
 
       - name: Update tap formula
         env:
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          if [[ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]]; then
-            echo "HOMEBREW_TAP_GITHUB_TOKEN is not configured, skipping Homebrew tap update"
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured, skipping Homebrew tap update"
             exit 0
           fi
           bash scripts/update-homebrew-formula.sh \
             --version "${GITHUB_REF_NAME#v}" \
             --dist-dir dist \
             --repo "${GITHUB_REPOSITORY}" \
-            --tap-repo "jolestar/homebrew-uxc"
+            --tap-repo "holon-run/homebrew-tap"
