@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO="jolestar/uxc"
+REPO="holon-run/uxc"
 INSTALL_DIR="/usr/local/bin"
 VERIFY_CHECKSUMS=1
 VERSION=""

@@ -12,7 +12,7 @@ import subprocess
 import json
 
 # GitHub repository
-REPO = "jolestar/uxc"
+REPO = "holon-run/uxc"
 
 # Issues to create
 ISSUES = [

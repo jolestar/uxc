@@ -21,7 +21,7 @@ Thank you for your interest in contributing to UXC!
 
 3. Add upstream remote:
    ```bash
-   git remote add upstream https://github.com/jolestar/uxc.git
+   git remote add upstream https://github.com/holon-run/uxc.git
    ```
 
 4. Install dependencies:

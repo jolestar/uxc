@@ -6,7 +6,7 @@ This project uses tag-based automated releases.
 
 - GitHub repository secrets:
   - `CARGO_REGISTRY_TOKEN` for crates.io publishing
-  - `HOMEBREW_TAP_GITHUB_TOKEN` for pushing formula updates to `jolestar/homebrew-uxc`
+  - `HOMEBREW_TAP_GITHUB_TOKEN` for pushing formula updates to `holon-run/homebrew-tap`
 - crates.io package name is available (`uxc`)
 
 ## Pre-release Checklist
@@ -44,7 +44,7 @@ git push origin vX.Y.Z
 3. Generate `uxc-vX.Y.Z-checksums.txt`
 4. Create GitHub Release with all assets
 5. Publish crate to crates.io
-6. Update `jolestar/homebrew-uxc` Formula
+6. Update `holon-run/homebrew-tap` Formula
 
 ## Rollback
 
@@ -69,6 +69,6 @@ If crate was already published, version cannot be reused. Publish a new version.
   - ensure version is not already published
 - Homebrew update skipped:
   - check `HOMEBREW_TAP_GITHUB_TOKEN` secret exists
-  - check token has push permission to `jolestar/homebrew-uxc`
+  - check token has push permission to `holon-run/homebrew-tap`
 - Missing release assets:
   - inspect failed matrix build job for target-specific toolchain errors

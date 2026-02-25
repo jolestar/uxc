@@ -201,4 +201,4 @@ jobs:
             --version "${GITHUB_REF_NAME#v}" \
             --dist-dir dist \
             --repo "${GITHUB_REPOSITORY}" \
-            --tap-repo "jolestar/homebrew-uxc"
+            --tap-repo "holon-run/homebrew-tap"

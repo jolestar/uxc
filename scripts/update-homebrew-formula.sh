@@ -5,7 +5,7 @@ set -euo pipefail
 VERSION=""
 DIST_DIR=""
 REPO=""
-TAP_REPO="jolestar/homebrew-uxc"
+TAP_REPO="holon-run/homebrew-tap"
 TAP_BRANCH="main"
 
 usage() {
@@ -86,7 +86,7 @@ render_formula() {
   cat <<EOF
 class Uxc < Formula
   desc "Universal X-Protocol Call"
-  homepage "https://github.com/jolestar/uxc"
+  homepage "https://github.com/${repo}"
   license "MIT"
   version "${version}"
 
