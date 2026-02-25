@@ -80,7 +80,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Validate skills
-        run: bash skills/uxc/scripts/validate.sh
+        run: |
+          set -euo pipefail
+          for script in skills/*/scripts/validate.sh; do
+            if [ -f "$script" ]; then
+              echo "Running validator: $script"
+              bash "$script"
+            fi
+          done
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
