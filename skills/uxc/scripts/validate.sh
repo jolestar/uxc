@@ -35,7 +35,13 @@ for file in "${required_files[@]}"; do
 done
 
 # Validate SKILL frontmatter minimum fields.
-if ! rg -q '^---$' "${SKILL_FILE}"; then
+# Require the first line to be '---' and a subsequent closing '---'.
+if ! head -n 1 "${SKILL_FILE}" | rg -q '^---$'; then
+  echo "SKILL.md must include YAML frontmatter"
+  exit 1
+fi
+
+if ! tail -n +2 "${SKILL_FILE}" | rg -q '^---$'; then
   echo "SKILL.md must include YAML frontmatter"
   exit 1
 fi

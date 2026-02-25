@@ -32,9 +32,12 @@ brew tap holon-run/homebrew-tap
 brew install uxc
 ```
 
-**Install Script (macOS/Linux):**
+**Install Script (macOS/Linux, review before running):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh -o install-uxc.sh
+# Review the script before running it
+less install-uxc.sh
+bash install-uxc.sh
 ```
 
 **Cargo:**
