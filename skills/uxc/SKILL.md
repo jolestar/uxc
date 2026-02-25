@@ -22,6 +22,28 @@ Do not use this skill for pure local file operations with no remote interface.
 - `uxc` is installed and available in `PATH`.
 - For gRPC runtime calls, `grpcurl` is installed and available in `PATH`.
 
+### Install uxc
+
+Choose one of the following methods:
+
+**Homebrew (macOS/Linux):**
+```bash
+brew tap holon-run/homebrew-tap
+brew install uxc
+```
+
+**Install Script (macOS/Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash
+```
+
+**Cargo:**
+```bash
+cargo install uxc
+```
+
+For more options, see the [Installation](https://github.com/holon-run/uxc#installation) section in the UXC README.
+
 ## Core Workflow
 
 1. Discover operations:

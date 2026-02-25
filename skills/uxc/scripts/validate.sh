@@ -6,6 +6,18 @@ SKILL_DIR="${ROOT_DIR}/skills/uxc"
 SKILL_FILE="${SKILL_DIR}/SKILL.md"
 OPENAI_FILE="${SKILL_DIR}/agents/openai.yaml"
 
+fail() {
+  printf '[validate] error: %s\n' "$*" >&2
+  exit 1
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+# Check dependencies
+need_cmd rg
+
 required_files=(
   "${SKILL_FILE}"
   "${OPENAI_FILE}"
