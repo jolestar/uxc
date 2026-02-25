@@ -1,6 +1,6 @@
 [package]
 name = "uxc"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["UXC Contributors"]
 description = "Universal X-Protocol Call - Schema-driven multi-protocol RPC execution runtime"

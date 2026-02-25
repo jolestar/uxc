@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-02-25
+
 ### Fixed
 - `call --help` no longer conflicts with clap auto-help; operation help uses `--op-help`
 - CLI failures now return structured JSON error envelope
@@ -93,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/holon-run/uxc/releases/tag/v0.1.1
 [0.1.0]: https://github.com/holon-run/uxc/releases/tag/v0.1.0
 [0.0.1]: https://github.com/holon-run/uxc/releases/tag/v0.0.1
