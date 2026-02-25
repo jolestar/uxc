@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepWiki"
+  short_description: "Query GitHub repo docs via DeepWiki MCP"
+  default_prompt: "Use $deepwiki to ask questions about GitHub repositories and read their documentation via DeepWiki MCP."
