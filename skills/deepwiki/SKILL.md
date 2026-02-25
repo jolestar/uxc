@@ -16,6 +16,28 @@ Use this skill to query GitHub repository documentation and ask questions about 
 
 Note: Repositories must be indexed on DeepWiki first. Visit https://deepwiki.com to index a repository.
 
+### Install uxc
+
+Choose one of the following methods:
+
+**Homebrew (macOS/Linux):**
+```bash
+brew tap holon-run/homebrew-tap
+brew install uxc
+```
+
+**Install Script (macOS/Linux, review before running):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh -o install-uxc.sh
+less install-uxc.sh
+bash install-uxc.sh
+```
+
+**Cargo:**
+```bash
+cargo install uxc
+```
+
 ## Core Workflow
 
 1. List available tools:
