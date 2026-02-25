@@ -89,6 +89,22 @@ Example: `feature/openapi-parser`
 
 8. Create a pull request
 
+### Updating Skills
+
+This repository includes a reusable Codex skill at `skills/uxc`.
+
+When CLI syntax, operation naming, or output envelope changes, update skill files in the same PR:
+
+- `skills/uxc/SKILL.md`
+- `skills/uxc/references/*`
+- `skills/uxc/agents/openai.yaml` (if prompt wording should change)
+
+Run validation before opening a PR:
+
+```bash
+bash skills/uxc/scripts/validate.sh
+```
+
 ## Commit Message Convention
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/):
@@ -213,6 +229,8 @@ git push origin vX.Y.Z
 ```
 
 See `docs/release.md` for full details, rollback, and troubleshooting.
+
+See `docs/skills.md` for skill install and maintenance details.
 
 ## Testing & Coverage
 

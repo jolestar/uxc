@@ -249,6 +249,18 @@ cd uxc
 cargo install --path .
 ```
 
+### Codex Skill (Reusable by Other Skills)
+
+Install the built-in `uxc` skill from this repository:
+
+```bash
+python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo holon-run/uxc \
+  --path skills/uxc
+```
+
+After installation, restart Codex to load the skill.
+
 ## Example Usage
 
 ### Operation ID Conventions
@@ -485,6 +497,7 @@ The CLI works independently, but can transparently use the daemon for performanc
 * Dynamically call remote capabilities
 * Avoid injecting large tool schemas into context
 * Maintain deterministic execution boundaries
+* Reuse the repository skill at `skills/uxc` as the shared API execution layer
 
 ### Infrastructure & DevOps
 
