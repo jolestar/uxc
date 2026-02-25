@@ -25,10 +25,10 @@ Baseline decision for Homebrew in this plan:
 - [x] Confirm release docs use the migrated repository URLs (`docs/release.md`, `README.md`).
 
 ### 4. Secrets and permissions in new repo
-- [ ] Configure `CARGO_REGISTRY_TOKEN` in `holon-run/uxc` repo secrets.
-- [ ] Configure `HOMEBREW_TAP_GITHUB_TOKEN` in `holon-run/uxc` repo secrets.
-- [ ] Ensure `HOMEBREW_TAP_GITHUB_TOKEN` has write access to `holon-run/homebrew-tap`.
-- [ ] Verify `release.yml` has required `contents: write` permissions for release asset publishing.
+- [x] Configure `CARGO_REGISTRY_TOKEN` in `holon-run/uxc` repo secrets.
+- [x] Configure `HOMEBREW_TAP_TOKEN` in `holon-run/uxc` repo/org secrets.
+- [x] Ensure `HOMEBREW_TAP_TOKEN` has write access to `holon-run/homebrew-tap`.
+- [x] Verify `release.yml` has required `contents: write` permissions for release asset publishing.
 
 ### 5. Validation before tag
 - [x] Run local release checks: `./scripts/release-check.sh vX.Y.Z`.
