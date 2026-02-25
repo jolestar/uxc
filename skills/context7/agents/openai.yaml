@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context7"
+  short_description: "Query library docs via Context7 MCP"
+  default_prompt: "Use $context7 to query up-to-date library documentation and code examples via Context7 MCP."
