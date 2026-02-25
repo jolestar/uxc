@@ -31,7 +31,7 @@ Baseline decision for Homebrew in this plan:
 - [ ] Verify `release.yml` has required `contents: write` permissions for release asset publishing.
 
 ### 5. Validation before tag
-- [ ] Run local release checks: `./scripts/release-check.sh vX.Y.Z`.
+- [x] Run local release checks: `./scripts/release-check.sh vX.Y.Z`.
 - [ ] Trigger CI on `main` and verify `CI`, `Coverage`, and `E2E Smoke Tests` are green.
 - [ ] Do a release dry run by validating generated artifacts and checksum naming.
 
