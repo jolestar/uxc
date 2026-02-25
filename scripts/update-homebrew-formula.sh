@@ -167,20 +167,28 @@ EOF
   clone_url="https://github.com/${TAP_REPO}.git"
   GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="${askpass_script}" \
     git clone --quiet --depth 1 --branch "${TAP_BRANCH}" "${clone_url}" "${workdir}/tap"
+  local formula_rel="Formula/uxc.rb"
+  local formula_path="${workdir}/tap/${formula_rel}"
   mkdir -p "${workdir}/tap/Formula"
-  render_formula "${VERSION}" "${REPO}" "${mac_arm_sha}" "${mac_x64_sha}" "${linux_arm_sha}" "${linux_x64_sha}" > "${workdir}/tap/Formula/uxc.rb"
+
+  local had_formula=0
+  if [[ -f "${formula_path}" ]]; then
+    had_formula=1
+  fi
+
+  render_formula "${VERSION}" "${REPO}" "${mac_arm_sha}" "${mac_x64_sha}" "${linux_arm_sha}" "${linux_x64_sha}" > "${formula_path}"
 
   pushd "${workdir}/tap" >/dev/null
   git config user.name "uxc-release-bot"
   git config user.email "uxc-release-bot@users.noreply.github.com"
 
-  if git diff --quiet -- Formula/uxc.rb; then
+  if [[ "${had_formula}" -eq 1 ]] && git diff --quiet -- "${formula_rel}"; then
     printf '[brew-update] no formula changes, skipping push\n'
     popd >/dev/null
     exit 0
   fi
 
-  git add Formula/uxc.rb
+  git add "${formula_rel}"
   git commit -m "uxc ${VERSION}"
   git push origin "${TAP_BRANCH}"
   popd >/dev/null
