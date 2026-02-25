@@ -147,7 +147,11 @@ impl Profile {
 /// Profiles collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profiles {
-    /// Map of profile name to profile
+    /// Map of profile name to strongly typed profile values.
+    ///
+    /// Keeping this as `Profile` (instead of an untyped JSON value) keeps TOML
+    /// storage and runtime representation consistent and avoids mixed
+    /// serialization semantics.
     #[serde(flatten)]
     pub profiles: HashMap<String, Profile>,
 }
