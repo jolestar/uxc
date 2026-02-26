@@ -1058,6 +1058,12 @@ impl GrpcurlAuthHeaders for Profile {
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&self.api_key);
                 format!("authorization: Basic {}", encoded)
             }
+            crate::auth::AuthType::OAuth => {
+                let token = self
+                    .bearer_token()
+                    .ok_or_else(|| anyhow!("OAuth profile is missing access token"))?;
+                format!("authorization: Bearer {}", token)
+            }
         };
 
         Ok(vec![header])
