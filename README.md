@@ -158,6 +158,33 @@ This makes UXC ideal for:
 
 ---
 
+## Host Shortcut
+
+Create a local shortcut command bound to a host:
+
+```bash
+uxc link petcli petstore3.swagger.io/api/v3
+petcli list
+petcli describe get:/pet/{petId}
+```
+
+Remove the shortcut by deleting the generated file:
+
+```bash
+# macOS/Linux
+which petcli
+rm ~/.local/bin/petcli
+
+# Windows (PowerShell)
+Get-Command petcli
+Remove-Item "$HOME\\.uxc\\bin\\petcli.cmd"
+```
+
+Tip: prefer namespaced shortcuts like `acme-petcli` to reduce naming conflicts.
+On Windows, `uxc link` creates `.cmd` launchers and defaults to `$HOME\\.uxc\\bin`.
+
+---
+
 ## Cache Management
 
 ```bash
