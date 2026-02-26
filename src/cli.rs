@@ -4,11 +4,10 @@
 //! It provides abstractions and core logic that can be tested independently
 //! of the main binary entry point.
 
-use crate::adapters::{Operation, OperationDetail};
+use crate::adapters::Operation;
 use crate::auth::{Profile, Profiles};
 use crate::cache::CacheConfig;
 use crate::error::UxcError;
-use crate::output::OutputEnvelope;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,60 +58,32 @@ impl From<anyhow::Error> for CliError {
     }
 }
 
-/// Trait for loading authentication profiles (abstracted for testing)
-pub trait AuthProfileLoader: Send + Sync {
-    /// Load a profile by name
-    fn load_profile(&self, name: Option<String>) -> Result<Option<Profile>>;
+/// Trait for loading authentication credentials (abstracted for testing)
+pub trait AuthCredentialLoader: Send + Sync {
+    /// Load a credential by ID
+    fn load_credential(&self, name: Option<String>) -> Result<Option<Profile>>;
 }
 
-/// Default auth profile loader
-pub struct DefaultAuthProfileLoader;
+/// Default auth credential loader
+pub struct DefaultAuthCredentialLoader;
 
-impl AuthProfileLoader for DefaultAuthProfileLoader {
-    fn load_profile(&self, cli_profile: Option<String>) -> Result<Option<Profile>> {
-        let (profile_name, profile_explicitly_selected) = if let Some(profile) = cli_profile {
-            (profile, true)
-        } else if let Ok(profile) = std::env::var("UXC_PROFILE") {
-            (profile, true)
-        } else {
-            ("default".to_string(), false)
+impl AuthCredentialLoader for DefaultAuthCredentialLoader {
+    fn load_credential(&self, cli_credential: Option<String>) -> Result<Option<Profile>> {
+        let Some(credential_id) = cli_credential else {
+            return Ok(None);
         };
 
-        match Profiles::load_profiles() {
-            Ok(profiles) => match profiles.get_profile(&profile_name) {
-                Ok(profile) => {
-                    let mut profile = profile.clone();
-                    profile.name = Some(profile_name);
-                    Ok(Some(profile))
-                }
-                Err(e) => {
-                    if !profile_explicitly_selected && profile_name == "default" {
-                        tracing::info!(
-                            "No 'default' profile found, continuing without authentication"
-                        );
-                        Ok(None)
-                    } else {
-                        Err(e)
-                    }
-                }
-            },
-            Err(e) => {
-                if !profile_explicitly_selected && profile_name == "default" {
-                    tracing::info!(
-                        "Could not load profiles: {}, continuing without authentication",
-                        e
-                    );
-                    Ok(None)
-                } else {
-                    Err(anyhow!(
-                        "Failed to load profile '{}': {}. Please run 'uxc auth set {} --api-key <key>' to create it.",
-                        profile_name,
-                        e,
-                        profile_name
-                    ))
-                }
-            }
-        }
+        let profiles = Profiles::load_profiles()?;
+        let mut profile = profiles.get_profile(&credential_id).cloned().map_err(|e| {
+            anyhow!(
+                "Failed to load credential '{}': {}. Run 'uxc auth credential set {} --secret <value>' to create it.",
+                credential_id,
+                e,
+                credential_id
+            )
+        })?;
+        profile.name = Some(credential_id);
+        Ok(Some(profile))
     }
 }
 
@@ -259,8 +230,8 @@ mod tests {
         profile: Option<Profile>,
     }
 
-    impl AuthProfileLoader for MockAuthLoader {
-        fn load_profile(&self, _name: Option<String>) -> Result<Option<Profile>> {
+    impl AuthCredentialLoader for MockAuthLoader {
+        fn load_credential(&self, _name: Option<String>) -> Result<Option<Profile>> {
             Ok(self.profile.clone())
         }
     }
@@ -409,14 +380,14 @@ mod tests {
                 crate::auth::AuthType::Bearer,
             )),
         };
-        let profile = loader.load_profile(Some("test".to_string())).unwrap();
+        let profile = loader.load_credential(Some("test".to_string())).unwrap();
         assert!(profile.is_some());
     }
 
     #[test]
     fn test_mock_auth_loader_no_profile() {
         let loader = MockAuthLoader { profile: None };
-        let profile = loader.load_profile(Some("test".to_string())).unwrap();
+        let profile = loader.load_credential(Some("test".to_string())).unwrap();
         assert!(profile.is_none());
     }
 
