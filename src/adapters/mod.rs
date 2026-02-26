@@ -254,7 +254,12 @@ impl ProtocolDetector {
             return Ok(AdapterEnum::GRpc(grpc_adapter));
         }
 
-        Err(UxcError::ProtocolDetectionFailed(format!("No adapter found for URL: {}", url)).into())
+        let mut message = format!("No adapter found for URL: {}", url);
+        if let Some(diag) = mcp_adapter.latest_probe_diagnostics().await {
+            message.push_str(&format!(". MCP probe diagnostics: {}", diag));
+        }
+
+        Err(UxcError::ProtocolDetectionFailed(message).into())
     }
 }
 

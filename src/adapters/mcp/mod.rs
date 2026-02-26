@@ -26,6 +26,7 @@ pub struct McpAdapter {
     cache: Option<Arc<dyn crate::cache::Cache>>,
     auth_profile: Option<Profile>,
     discovered_http_endpoints: Arc<RwLock<HashMap<String, String>>>,
+    last_probe_diagnostics: Arc<RwLock<Option<String>>>,
 }
 
 impl McpAdapter {
@@ -34,6 +35,7 @@ impl McpAdapter {
             cache: None,
             auth_profile: None,
             discovered_http_endpoints: Arc::new(RwLock::new(HashMap::new())),
+            last_probe_diagnostics: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -119,25 +121,46 @@ impl McpAdapter {
     async fn resolve_http_endpoint(&self, url: &str) -> Option<String> {
         let normalized = Self::normalize_http_url(url);
         {
+            let mut diag = self.last_probe_diagnostics.write().await;
+            *diag = None;
+        }
+        {
             let cache = self.discovered_http_endpoints.read().await;
             if let Some(endpoint) = cache.get(&normalized) {
                 return Some(endpoint.clone());
             }
         }
 
+        let mut reasons = Vec::new();
         for candidate in Self::http_endpoint_candidates(url) {
-            match McpHttpTransport::probe_initialize(&candidate, self.auth_profile.clone()).await {
-                Ok(true) => {
+            match McpHttpTransport::probe_initialize_with_reason(
+                &candidate,
+                self.auth_profile.clone(),
+            )
+            .await
+            {
+                Ok(http_transport::ProbeInitializeOutcome::Success) => {
                     let mut cache = self.discovered_http_endpoints.write().await;
                     cache.insert(normalized, candidate.clone());
                     return Some(candidate);
                 }
-                Ok(false) => {}
-                Err(_) => {}
+                Ok(http_transport::ProbeInitializeOutcome::NotMcp(reason)) => {
+                    reasons.push(format!("{} => {}", candidate, reason));
+                }
+                Err(err) => reasons.push(format!("{} => {}", candidate, err)),
             }
         }
 
+        if !reasons.is_empty() {
+            let mut diag = self.last_probe_diagnostics.write().await;
+            *diag = Some(reasons.join("; "));
+        }
+
         None
+    }
+
+    pub async fn latest_probe_diagnostics(&self) -> Option<String> {
+        self.last_probe_diagnostics.read().await.clone()
     }
 }
 
