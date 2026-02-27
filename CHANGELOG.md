@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-27
+
+### Added
+- OAuth `authorization_code` + PKCE login flow for MCP HTTP (`uxc auth oauth login --flow authorization_code`)
+- OAuth discovery fallback via `/.well-known/oauth-protected-resource` when `WWW-Authenticate` metadata is missing
+
+### Changed
+- Authentication model refactored to credential + binding storage in JSON files:
+  - `~/.uxc/credentials.json`
+  - `~/.uxc/auth_bindings.json`
+- Auth CLI redesigned around credential/binding operations (`uxc auth credential ...`, `uxc auth binding ...`)
+
+### Fixed
+- MCP OAuth compatibility improvements for real providers (device polling and discovery behavior)
+- OpenAPI GitHub `GET /user` execution decode handling
+- Local E2E/contract test coverage and stability improvements across protocols
+
 ## [0.1.1] - 2026-02-25
 
 ### Fixed
@@ -95,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/holon-run/uxc/releases/tag/v0.2.0
 [0.1.1]: https://github.com/holon-run/uxc/releases/tag/v0.1.1
 [0.1.0]: https://github.com/holon-run/uxc/releases/tag/v0.1.0
 [0.0.1]: https://github.com/holon-run/uxc/releases/tag/v0.0.1
