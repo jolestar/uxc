@@ -1,5 +1,12 @@
-name: E2E Smoke Tests
+# E2E Smoke Tests - Real Public API Compatibility Testing
+#
+# This workflow tests uxc against real public APIs to verify compatibility.
+# These tests are primarily for compatibility monitoring and are non-blocking
+# for PRs (they run but don't block merging).
+#
+# For local deterministic E2E tests, see the local-e2e job in ci.yml.
 
+name: E2E Smoke Tests (Public APIs)
 on:
   push:
     branches: [main]
