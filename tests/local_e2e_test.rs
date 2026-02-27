@@ -82,7 +82,7 @@ fn test_openapi_call_post_operation() {
     let result = run_uxc(&[
         &format!("http://{}/", _server.addr),
         "post:/users",
-        "--json",
+        "--input-json",
         r#"{"name":"Charlie","email":"charlie@example.com"}"#,
     ]);
 
@@ -165,7 +165,7 @@ fn test_graphql_call_with_args() {
     let result = run_uxc(&[
         &format!("http://{}/", _server.addr),
         "query/user",
-        "--json",
+        "--input-json",
         r#"{"id":"2"}"#,
     ]);
 
@@ -191,7 +191,7 @@ fn test_graphql_call_mutation() {
     let result = run_uxc(&[
         &format!("http://{}/", _server.addr),
         "mutation/createUser",
-        "--json",
+        "--input-json",
         r#"{"name":"Dave","email":"dave@example.com"}"#,
     ]);
 
@@ -287,7 +287,7 @@ fn test_jsonrpc_call_with_args() {
     let result = run_uxc(&[
         &format!("http://{}/", _server.addr),
         "get_user",
-        "--json",
+        "--input-json",
         r#"{"id":1}"#,
     ]);
 
@@ -313,7 +313,7 @@ fn test_jsonrpc_call_create_user() {
     let result = run_uxc(&[
         &format!("http://{}/", _server.addr),
         "create_user",
-        "--json",
+        "--input-json",
         r#"{"name":"Erin","email":"erin@example.com"}"#,
     ]);
 
@@ -434,7 +434,7 @@ fn test_grpc_call_method() {
     let result = run_uxc(&[
         &format!("http://{}", _server.addr),
         "addsvc.Add/Sum",
-        "--json",
+        "--input-json",
         r#"{"a":1,"b":2}"#,
     ]);
 
@@ -460,7 +460,7 @@ fn test_grpc_call_unknown_method_fails() {
     let result = run_uxc(&[
         &format!("http://{}", _server.addr),
         "addsvc.Add/Unknown",
-        "--json",
+        "--input-json",
         r#"{"a":1,"b":2}"#,
     ]);
 
@@ -517,7 +517,7 @@ fn test_mcp_http_call_tool() {
     let result = run_uxc(&[
         &format!("http://{}", _server.addr),
         "echo",
-        "--json",
+        "--input-json",
         r#"{"message":"hello mcp"}"#,
     ]);
 
@@ -538,6 +538,38 @@ fn test_mcp_http_auth_required() {
     let result = run_uxc(&[&format!("http://{}", _server.addr), "list"]);
 
     assert!(result.is_err(), "Expected MCP HTTP auth error, got success");
+}
+
+#[test]
+fn test_mcp_http_host_help_includes_service_metadata() {
+    let _server = start_test_server("mcp-http", "ok");
+
+    let result = run_uxc(&[&format!("http://{}", _server.addr), "help"]);
+    assert!(result.is_ok(), "Failed to run MCP HTTP help: {:?}", result);
+
+    let output = result.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["kind"], "host_help");
+    assert_eq!(json["protocol"], "mcp");
+    assert_eq!(json["data"]["service"]["name"], "uxc-test-mcp-http");
+    assert_eq!(
+        json["data"]["service"]["description"],
+        "MCP HTTP test server for local e2e"
+    );
+}
+
+#[test]
+fn test_mcp_http_text_help_prints_service_summary() {
+    let _server = start_test_server("mcp-http", "ok");
+
+    let result = run_uxc(&["--text", &format!("http://{}", _server.addr), "help"]);
+    assert!(result.is_ok(), "Failed to run MCP HTTP help: {:?}", result);
+
+    let output = result.unwrap();
+    assert!(output.contains("Service:"));
+    assert!(output.contains("Name: uxc-test-mcp-http"));
+    assert!(output.contains("Description: MCP HTTP test server for local e2e"));
 }
 
 #[test]
@@ -574,7 +606,12 @@ fn test_mcp_stdio_call_tool() {
     let bin = test_server_binary("mcp-stdio");
     let endpoint = format!("{} ok", bin.display());
 
-    let result = run_uxc(&[&endpoint, "echo", "--json", r#"{"message":"from stdio"}"#]);
+    let result = run_uxc(&[
+        &endpoint,
+        "echo",
+        "--input-json",
+        r#"{"message":"from stdio"}"#,
+    ]);
 
     assert!(
         result.is_ok(),
@@ -595,7 +632,7 @@ fn test_mcp_stdio_auth_required() {
     let bin = test_server_binary("mcp-stdio");
     let endpoint = format!("{} auth_required", bin.display());
 
-    let result = run_uxc(&[&endpoint, "echo", "--json", r#"{"message":"x"}"#]);
+    let result = run_uxc(&[&endpoint, "echo", "--input-json", r#"{"message":"x"}"#]);
 
     assert!(result.is_err(), "Expected MCP stdio auth error");
 }

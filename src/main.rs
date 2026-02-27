@@ -18,13 +18,17 @@ mod auth;
 mod cache;
 pub mod cli;
 mod error;
+mod http_client;
 mod output;
 mod schema_mapping;
 
-use adapters::{Adapter, DetectionOptions, Operation, OperationDetail, ProtocolDetector};
+use adapters::{
+    Adapter, AdapterEnum, DetectionOptions, Operation, OperationDetail, ProtocolDetector,
+};
 use auth::{AuthBindingRule, AuthBindings, AuthType, OAuthFlow, Profile, Profiles};
 use cache::CacheConfig;
 use error::UxcError;
+use http_client::build_resilient_http_client;
 use output::OutputEnvelope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -154,11 +158,15 @@ enum Commands {
         args: Vec<String>,
 
         /// JSON input payload
-        #[arg(long)]
-        json: Option<String>,
+        #[arg(long = "input-json")]
+        input_json: Option<String>,
+
+        /// Positional input (`key=value` or a single JSON object payload)
+        #[arg(value_name = "INPUT")]
+        input: Option<String>,
     },
 
-    /// Dynamic operation execution: `uxc <url> <operation_id> [--json ...] [--args k=v]`
+    /// Dynamic operation execution: `uxc <url> <operation_id> [--input-json ...] [--args k=v]`
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -367,7 +375,7 @@ enum EndpointCommand {
     Execute {
         operation_id: String,
         args: Vec<String>,
-        json: Option<String>,
+        input_json: Option<String>,
     },
 }
 
@@ -386,6 +394,16 @@ struct HostHelpData {
     operations: Vec<OperationSummary>,
     count: usize,
     next: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service: Option<ServiceSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ServiceSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -756,6 +774,7 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
             let start = std::time::Instant::now();
             let operations = adapter.list_operations(&url).await?;
             let protocol = adapter.protocol_type().as_str();
+            let service = resolve_host_help_service(&adapter, protocol, &url).await;
             let duration_ms = start.elapsed().as_millis() as u64;
             let summaries = operations
                 .iter()
@@ -764,11 +783,8 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
             let data = serde_json::to_value(HostHelpData {
                 count: summaries.len(),
                 operations: summaries,
-                next: vec![
-                    "uxc <host> list".to_string(),
-                    "uxc <host> describe <operation_id>".to_string(),
-                    "uxc <host> call <operation_id> --json '{...}'".to_string(),
-                ],
+                next: host_help_next_commands(),
+                service,
             })?;
             OutputEnvelope::success("host_help", protocol, &url, None, data, Some(duration_ms))
         }
@@ -836,9 +852,9 @@ async fn execute_cli(cli: &Cli) -> Result<OutputEnvelope> {
         EndpointCommand::Execute {
             operation_id,
             args,
-            json,
+            input_json,
         } => {
-            let args_map = parse_arguments(args, json)?;
+            let args_map = parse_arguments(args, input_json)?;
             let result = adapter.execute(&url, &operation_id, args_map).await?;
             let protocol = adapter.protocol_type().as_str();
             OutputEnvelope::success(
@@ -949,7 +965,13 @@ fn render_text_output(envelope: &OutputEnvelope) -> Result<()> {
             let endpoint = envelope.endpoint.as_deref().unwrap_or("unknown");
             let protocol = envelope.protocol.as_deref().unwrap_or("unknown");
             let data: HostHelpData = decode_envelope_data(envelope)?;
-            print_host_help_text_from_summaries(protocol, endpoint, &data.operations, &data.next);
+            print_host_help_text_from_summaries(
+                protocol,
+                endpoint,
+                &data.operations,
+                &data.next,
+                &data.service,
+            );
             Ok(())
         }
         Some("operation_list") => {
@@ -1167,12 +1189,22 @@ fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
         Some(Commands::Call {
             operation_id,
             args,
-            json,
-        }) => Ok(EndpointCommand::Execute {
-            operation_id: operation_id.clone(),
-            args: args.clone(),
-            json: json.clone(),
-        }),
+            input_json,
+            input,
+        }) => {
+            let positional = input.clone().into_iter().collect::<Vec<_>>();
+            let (resolved_args, resolved_input_json) = normalize_operation_inputs(
+                operation_id,
+                args.clone(),
+                input_json.clone(),
+                &positional,
+            )?;
+            Ok(EndpointCommand::Execute {
+                operation_id: operation_id.clone(),
+                args: resolved_args,
+                input_json: resolved_input_json,
+            })
+        }
         Some(Commands::External(tokens)) => parse_external_command(tokens, cli.help),
         Some(Commands::Cache { .. })
         | Some(Commands::Auth { .. })
@@ -1205,7 +1237,8 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
     }
 
     let mut args = Vec::new();
-    let mut json_payload = None;
+    let mut input_json = None;
+    let mut positional = Vec::new();
     let mut idx = 1;
 
     while idx < tokens.len() {
@@ -1220,19 +1253,22 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
                 })?;
                 args.push(arg.clone());
             }
-            "--json" => {
+            "--input-json" => {
                 idx += 1;
                 let payload = tokens.get(idx).ok_or_else(|| {
-                    UxcError::InvalidArguments("Missing value for --json".to_string())
+                    UxcError::InvalidArguments("Missing value for --input-json".to_string())
                 })?;
-                json_payload = Some(payload.clone());
+                input_json = Some(payload.clone());
             }
             token if token.contains('=') && !token.starts_with('-') => {
                 args.push(token.to_string());
             }
+            token if !token.starts_with('-') => {
+                positional.push(token.to_string());
+            }
             unknown => {
                 return Err(UxcError::InvalidArguments(format!(
-                    "Unknown argument '{}' for operation '{}'. Use --json or --args",
+                    "Unknown argument '{}' for operation '{}'. Use --input-json or --args",
                     unknown, operation_id
                 ))
                 .into());
@@ -1242,20 +1278,81 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
         idx += 1;
     }
 
+    let (args, input_json) =
+        normalize_operation_inputs(&operation_id, args, input_json, &positional)?;
+
     Ok(EndpointCommand::Execute {
         operation_id,
         args,
-        json: json_payload,
+        input_json,
     })
+}
+
+fn normalize_operation_inputs(
+    operation_id: &str,
+    mut args: Vec<String>,
+    explicit_input_json: Option<String>,
+    positional: &[String],
+) -> Result<(Vec<String>, Option<String>)> {
+    let mut bare_json_payload = None;
+
+    for token in positional {
+        if token.contains('=') && !token.starts_with('-') {
+            args.push(token.clone());
+            continue;
+        }
+
+        if token.starts_with('-') {
+            return Err(UxcError::InvalidArguments(format!(
+                "Unknown argument '{}' for operation '{}'. Use --input-json or --args",
+                token, operation_id
+            ))
+            .into());
+        }
+
+        if bare_json_payload.is_some() {
+            return Err(UxcError::InvalidArguments(format!(
+                "Unexpected argument '{}' for operation '{}'",
+                token, operation_id
+            ))
+            .into());
+        }
+
+        let parsed = serde_json::from_str::<Value>(token).map_err(|_| {
+            UxcError::InvalidArguments(format!(
+                "Unknown argument '{}' for operation '{}'. Use --input-json or --args",
+                token, operation_id
+            ))
+        })?;
+
+        if !parsed.is_object() {
+            return Err(UxcError::InvalidArguments(format!(
+                "Positional JSON payload for operation '{}' must be an object",
+                operation_id
+            ))
+            .into());
+        }
+
+        bare_json_payload = Some(token.clone());
+    }
+
+    if explicit_input_json.is_some() && bare_json_payload.is_some() {
+        return Err(UxcError::InvalidArguments(
+            "Cannot provide both --input-json and positional JSON payload".to_string(),
+        )
+        .into());
+    }
+
+    Ok((args, explicit_input_json.or(bare_json_payload)))
 }
 
 fn parse_arguments(
     args: Vec<String>,
-    json_payload: Option<String>,
+    input_json: Option<String>,
 ) -> Result<HashMap<String, Value>> {
     let mut args_map = HashMap::new();
 
-    if let Some(json_str) = json_payload {
+    if let Some(json_str) = input_json {
         let value: Value = serde_json::from_str(&json_str)
             .map_err(|e| UxcError::InvalidArguments(format!("Invalid JSON payload: {}", e)))?;
         if let Some(obj) = value.as_object() {
@@ -1284,14 +1381,64 @@ fn print_json(envelope: &OutputEnvelope) -> Result<()> {
     Ok(())
 }
 
+fn host_help_next_commands() -> Vec<String> {
+    if let Ok(link_name) = std::env::var("UXC_LINK_NAME") {
+        let link_name = link_name.trim();
+        if !link_name.is_empty() {
+            return vec![
+                format!("{link_name} list"),
+                format!("{link_name} describe <operation_id>"),
+                format!("{link_name} call <operation_id> --input-json '{{...}}'"),
+            ];
+        }
+    }
+
+    vec![
+        "uxc <host> list".to_string(),
+        "uxc <host> describe <operation_id>".to_string(),
+        "uxc <host> call <operation_id> --input-json '{...}'".to_string(),
+    ]
+}
+
+async fn resolve_host_help_service(
+    adapter: &AdapterEnum,
+    protocol: &str,
+    endpoint: &str,
+) -> Option<ServiceSummary> {
+    if protocol == "mcp" {
+        if let AdapterEnum::Mcp(mcp_adapter) = adapter {
+            if let Some(metadata) = mcp_adapter.service_metadata_for(endpoint).await {
+                if metadata.name.is_some() || metadata.description.is_some() {
+                    return Some(ServiceSummary {
+                        name: metadata.name,
+                        description: metadata.description,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 fn print_host_help_text_from_summaries(
     protocol: &str,
     endpoint: &str,
     operations: &[OperationSummary],
     next: &[String],
+    service: &Option<ServiceSummary>,
 ) {
     println!("Protocol: {}", protocol);
     println!("Endpoint: {}", endpoint);
+    if let Some(service) = service {
+        println!();
+        println!("Service:");
+        if let Some(name) = &service.name {
+            println!("  Name: {}", name);
+        }
+        if let Some(description) = &service.description {
+            println!("  Description: {}", description);
+        }
+    }
     println!();
     println!("Available operations:");
     for op in operations {
@@ -1427,7 +1574,7 @@ async fn handle_link_command(
     fs::create_dir_all(&target_dir)?;
 
     let target_path = link_target_path(&target_dir, name);
-    let launcher = build_link_launcher(host);
+    let launcher = build_link_launcher(name, host);
     let target_exists_before = target_path.exists();
     write_link_file(&target_path, launcher.as_bytes(), force)?;
     set_executable_if_unix(&target_path)?;
@@ -1466,16 +1613,21 @@ fn link_target_path(dir: &Path, name: &str) -> PathBuf {
     }
 }
 
-fn build_link_launcher(host: &str) -> String {
+fn build_link_launcher(name: &str, host: &str) -> String {
     #[cfg(windows)]
     {
+        let escaped_name = name.replace('"', "\"\"");
         let escaped = host.replace('"', "\"\"");
-        return format!("@echo off\r\nuxc \"{}\" %*\r\n", escaped);
+        return format!(
+            "@echo off\r\nset \"UXC_LINK_NAME={}\"\r\nuxc \"{}\" %*\r\n",
+            escaped_name, escaped
+        );
     }
     #[cfg(not(windows))]
     {
         format!(
-            "#!/usr/bin/env sh\nexec uxc {} \"$@\"\n",
+            "#!/usr/bin/env sh\nUXC_LINK_NAME={} exec uxc {} \"$@\"\n",
+            shell_single_quote(name),
             shell_single_quote(host)
         )
     }
@@ -2014,9 +2166,10 @@ async fn handle_auth_oauth_command(command: &AuthOauthCommands) -> Result<Output
         } => {
             let flow = parse_oauth_flow(flow)?;
             let scopes = auth::oauth::parse_scopes(scope);
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()?;
+            let client = build_resilient_http_client(
+                std::time::Duration::from_secs(30),
+                "OAuth login command",
+            )?;
 
             let (metadata, token, resolved_client_id, resolved_client_secret) = match flow {
                 OAuthFlow::DeviceCode => {
@@ -2115,9 +2268,10 @@ async fn handle_auth_oauth_command(command: &AuthOauthCommands) -> Result<Output
             ))
         }
         AuthOauthCommands::Refresh { credential_id } => {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()?;
+            let client = build_resilient_http_client(
+                std::time::Duration::from_secs(30),
+                "OAuth refresh command",
+            )?;
             let mut profiles = Profiles::load_profiles()?;
             let mut profile_data = profiles.get_profile(credential_id)?.clone();
             profile_data.name = Some(credential_id.clone());
