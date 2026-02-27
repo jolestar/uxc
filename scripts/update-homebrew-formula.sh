@@ -147,7 +147,7 @@ main() {
 
   local workdir
   workdir="$(mktemp -d)"
-  trap 'rm -rf "${workdir}"' EXIT
+  trap 'rm -rf "${workdir:-}"' EXIT
 
   local askpass_script clone_url
   askpass_script="${workdir}/git-askpass.sh"
@@ -190,7 +190,8 @@ EOF
 
   git add "${formula_rel}"
   git commit -m "uxc ${VERSION}"
-  git push origin "${TAP_BRANCH}"
+  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="${askpass_script}" \
+    git push origin "${TAP_BRANCH}"
   popd >/dev/null
 
   printf '[brew-update] updated %s Formula/uxc.rb to %s\n' "${TAP_REPO}" "${VERSION}"
