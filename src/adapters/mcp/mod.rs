@@ -20,7 +20,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 #[cfg(test)]
 pub use transport::MockStdioExecutor;
-pub use transport::{DefaultStdioProcessExecutor, SpawnedProcess, StdioProcessExecutor};
 
 pub struct McpAdapter {
     cache: Option<Arc<dyn crate::cache::Cache>>,
@@ -313,6 +312,7 @@ impl Adapter for McpAdapter {
                 anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
             })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
+            transport.initialize().await?;
             let tools = transport.list_tools().await?;
 
             let operations = tools
@@ -374,6 +374,7 @@ impl Adapter for McpAdapter {
                 anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
             })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
+            transport.initialize().await?;
             let tools = transport.list_tools().await?;
 
             for tool in tools {
@@ -438,6 +439,7 @@ impl Adapter for McpAdapter {
                 anyhow::anyhow!("Unable to discover MCP HTTP endpoint for {}", url)
             })?;
             let transport = McpHttpTransport::with_auth(endpoint, self.auth_profile.clone())?;
+            transport.initialize().await?;
 
             // Build arguments JSON
             let arguments = if args.is_empty() {

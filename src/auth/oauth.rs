@@ -1,10 +1,15 @@
 use crate::auth::{OAuthFlow, OAuthProfile, Profile};
 use crate::error::UxcError;
 use anyhow::{anyhow, Context, Result};
+use base64::Engine;
+use getrandom::getrandom;
 use reqwest::Client;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use url::Url;
 
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -13,6 +18,8 @@ pub struct OAuthProviderMetadata {
     pub provider_issuer: Option<String>,
     pub resource_metadata_url: Option<String>,
     pub authorization_server: Option<String>,
+    pub authorization_endpoint: Option<String>,
+    pub registration_endpoint: Option<String>,
     pub token_endpoint: String,
     pub device_authorization_endpoint: Option<String>,
 }
@@ -34,6 +41,13 @@ pub struct OAuthTokenResponse {
 pub struct OAuthLoginResult {
     pub metadata: OAuthProviderMetadata,
     pub token: OAuthTokenResponse,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorizationCodeLoginResult {
+    pub login: OAuthLoginResult,
+    pub client_id: String,
+    pub client_secret: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +74,10 @@ struct ResourceMetadataDocument {
 struct OpenIdConfiguration {
     #[serde(default)]
     issuer: Option<String>,
+    #[serde(default)]
+    authorization_endpoint: Option<String>,
+    #[serde(default)]
+    registration_endpoint: Option<String>,
     token_endpoint: String,
     #[serde(default)]
     device_authorization_endpoint: Option<String>,
@@ -69,6 +87,10 @@ struct OpenIdConfiguration {
 struct AuthorizationServerMetadata {
     #[serde(default)]
     issuer: Option<String>,
+    #[serde(default)]
+    authorization_endpoint: Option<String>,
+    #[serde(default)]
+    registration_endpoint: Option<String>,
     token_endpoint: String,
     #[serde(default)]
     device_authorization_endpoint: Option<String>,
@@ -140,7 +162,7 @@ pub async fn discover_provider_metadata(
 ) -> Result<OAuthProviderMetadata> {
     let resource_metadata_url = discover_resource_metadata_url(endpoint, client).await?;
 
-    let authorization_server = if let Some(resource_url) = &resource_metadata_url {
+    let mut authorization_server = if let Some(resource_url) = &resource_metadata_url {
         let resource_doc = client
             .get(resource_url)
             .send()
@@ -158,6 +180,10 @@ pub async fn discover_provider_metadata(
     } else {
         None
     };
+
+    if authorization_server.is_none() {
+        authorization_server = endpoint_origin(endpoint);
+    }
 
     let issuer = authorization_server.clone().ok_or_else(|| {
         UxcError::OAuthDiscoveryFailed(
@@ -180,6 +206,23 @@ pub async fn discover_provider_metadata(
             )
         })?;
 
+    let authorization_endpoint = authorization_server_metadata
+        .as_ref()
+        .and_then(|meta| meta.authorization_endpoint.clone())
+        .or_else(|| {
+            openid
+                .as_ref()
+                .and_then(|config| config.authorization_endpoint.clone())
+        });
+    let registration_endpoint = authorization_server_metadata
+        .as_ref()
+        .and_then(|meta| meta.registration_endpoint.clone())
+        .or_else(|| {
+            openid
+                .as_ref()
+                .and_then(|config| config.registration_endpoint.clone())
+        });
+
     let provider_issuer = authorization_server_metadata
         .as_ref()
         .and_then(|meta| meta.issuer.clone())
@@ -197,9 +240,182 @@ pub async fn discover_provider_metadata(
         provider_issuer,
         resource_metadata_url,
         authorization_server: Some(issuer),
+        authorization_endpoint,
+        registration_endpoint,
         token_endpoint,
         device_authorization_endpoint,
     })
+}
+
+pub async fn login_with_authorization_code(
+    endpoint: &str,
+    client: &Client,
+    client_id: Option<&str>,
+    client_secret: Option<&str>,
+    scopes: &[String],
+    redirect_uri: &str,
+    authorization_code: Option<String>,
+) -> Result<AuthorizationCodeLoginResult> {
+    let metadata = discover_provider_metadata(endpoint, client).await?;
+    let authorization_endpoint = metadata.authorization_endpoint.clone().ok_or_else(|| {
+        UxcError::OAuthDiscoveryFailed(
+            "OAuth provider does not expose authorization_endpoint".to_string(),
+        )
+    })?;
+    let (resolved_client_id, resolved_client_secret) = match client_id {
+        Some(id) => (id.to_string(), client_secret.map(|s| s.to_string())),
+        None => dynamic_client_registration(&metadata, client, redirect_uri, scopes).await?,
+    };
+
+    let state = random_urlsafe(24)?;
+    let code_verifier = random_urlsafe(64)?;
+    let code_challenge = pkce_s256_code_challenge(&code_verifier);
+    let scope_value = if scopes.is_empty() {
+        None
+    } else {
+        Some(scopes.join(" "))
+    };
+    let authorize_url = build_authorize_url(
+        &authorization_endpoint,
+        &resolved_client_id,
+        redirect_uri,
+        scope_value.as_deref(),
+        &state,
+        &code_challenge,
+    )?;
+
+    eprintln!("Open this URL to authorize:");
+    eprintln!("{}", authorize_url);
+    eprintln!();
+
+    let input = authorization_code
+        .or_else(read_authorization_code_from_stdin)
+        .ok_or_else(|| {
+            UxcError::OAuthTokenExchangeFailed(
+                "Authorization code is required to continue".to_string(),
+            )
+        })?;
+    let (code, returned_state) = parse_authorization_code_input(&input).ok_or_else(|| {
+        UxcError::OAuthTokenExchangeFailed(
+            "Could not parse authorization code from input".to_string(),
+        )
+    })?;
+
+    if let Some(returned_state) = returned_state {
+        if returned_state != state {
+            return Err(UxcError::OAuthTokenExchangeFailed(
+                "OAuth state mismatch from authorization response".to_string(),
+            )
+            .into());
+        }
+    }
+
+    let mut form: HashMap<&str, String> = HashMap::new();
+    form.insert("grant_type", "authorization_code".to_string());
+    form.insert("code", code);
+    form.insert("redirect_uri", redirect_uri.to_string());
+    form.insert("client_id", resolved_client_id.clone());
+    form.insert("code_verifier", code_verifier);
+    if let Some(secret) = resolved_client_secret.clone() {
+        form.insert("client_secret", secret);
+    }
+
+    let token = exchange_token(client, &metadata.token_endpoint, &form)
+        .await
+        .map_err(|err| UxcError::OAuthTokenExchangeFailed(err.to_string()))?;
+
+    Ok(AuthorizationCodeLoginResult {
+        login: OAuthLoginResult { metadata, token },
+        client_id: resolved_client_id,
+        client_secret: resolved_client_secret,
+    })
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DynamicClientRegistrationRequest {
+    client_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_uri: Option<String>,
+    redirect_uris: Vec<String>,
+    grant_types: Vec<String>,
+    response_types: Vec<String>,
+    token_endpoint_auth_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicClientRegistrationResponse {
+    client_id: String,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
+async fn dynamic_client_registration(
+    metadata: &OAuthProviderMetadata,
+    client: &Client,
+    redirect_uri: &str,
+    scopes: &[String],
+) -> Result<(String, Option<String>)> {
+    let registration_endpoint = metadata.registration_endpoint.clone().ok_or_else(|| {
+        UxcError::OAuthDiscoveryFailed(
+            "OAuth provider does not expose registration_endpoint and --client-id was not provided"
+                .to_string(),
+        )
+    })?;
+
+    let request = DynamicClientRegistrationRequest {
+        client_name: "uxc".to_string(),
+        client_uri: Some(env!("CARGO_PKG_HOMEPAGE").to_string()),
+        redirect_uris: vec![redirect_uri.to_string()],
+        grant_types: vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ],
+        response_types: vec!["code".to_string()],
+        token_endpoint_auth_method: "none".to_string(),
+        scope: if scopes.is_empty() {
+            None
+        } else {
+            Some(scopes.join(" "))
+        },
+    };
+
+    let response = client
+        .post(&registration_endpoint)
+        .header("Accept", "application/json")
+        .json(&request)
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to call dynamic client registration endpoint: {}",
+                registration_endpoint
+            )
+        })?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("Failed to read dynamic client registration response body")?;
+
+    if !status.is_success() {
+        return Err(UxcError::OAuthTokenExchangeFailed(format!(
+            "Dynamic client registration failed: {} {}",
+            status, body
+        ))
+        .into());
+    }
+
+    let result: DynamicClientRegistrationResponse = serde_json::from_str(&body).map_err(|err| {
+        UxcError::OAuthTokenExchangeFailed(format!(
+            "Failed to decode dynamic client registration response: {}",
+            err
+        ))
+    })?;
+
+    Ok((result.client_id, result.client_secret))
 }
 
 pub async fn login_with_client_credentials(
@@ -414,16 +630,37 @@ async fn discover_resource_metadata_url(endpoint: &str, client: &Client) -> Resu
         .await
         .context("Failed to call MCP endpoint for OAuth discovery")?;
 
-    if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-        return Ok(None);
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        let header = response
+            .headers()
+            .get(reqwest::header::WWW_AUTHENTICATE)
+            .and_then(|value| value.to_str().ok());
+        if let Some(metadata_url) = header.and_then(parse_resource_metadata_from_www_authenticate) {
+            return Ok(Some(metadata_url));
+        }
     }
 
-    let header = response
-        .headers()
-        .get(reqwest::header::WWW_AUTHENTICATE)
-        .and_then(|value| value.to_str().ok());
+    discover_resource_metadata_url_from_well_known(endpoint, client).await
+}
 
-    Ok(header.and_then(parse_resource_metadata_from_www_authenticate))
+async fn discover_resource_metadata_url_from_well_known(
+    endpoint: &str,
+    client: &Client,
+) -> Result<Option<String>> {
+    let Some(origin) = endpoint_origin(endpoint) else {
+        return Ok(None);
+    };
+    let candidate = format!("{}/.well-known/oauth-protected-resource", origin);
+    let response = client
+        .get(&candidate)
+        .header("Accept", "application/json")
+        .send()
+        .await;
+    match response {
+        Ok(resp) if resp.status().is_success() => Ok(Some(candidate)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
 }
 
 async fn resolve_token_endpoint(oauth: &mut OAuthProfile, client: &Client) -> Result<String> {
@@ -622,6 +859,107 @@ fn infer_device_authorization_endpoint(
     None
 }
 
+fn endpoint_origin(endpoint: &str) -> Option<String> {
+    let url = Url::parse(endpoint).ok()?;
+    let scheme = url.scheme();
+    let host = url.host_str()?;
+    let mut origin = format!("{}://{}", scheme, host);
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+    Some(origin)
+}
+
+fn random_urlsafe(bytes_len: usize) -> Result<String> {
+    let mut bytes = vec![0u8; bytes_len];
+    getrandom(&mut bytes).context("Failed to generate random bytes for OAuth")?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn pkce_s256_code_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn build_authorize_url(
+    authorization_endpoint: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    scope: Option<&str>,
+    state: &str,
+    code_challenge: &str,
+) -> Result<String> {
+    let mut url = Url::parse(authorization_endpoint).with_context(|| {
+        format!(
+            "Invalid OAuth authorization endpoint: {}",
+            authorization_endpoint
+        )
+    })?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", client_id);
+        query.append_pair("redirect_uri", redirect_uri);
+        query.append_pair("state", state);
+        query.append_pair("code_challenge", code_challenge);
+        query.append_pair("code_challenge_method", "S256");
+        if let Some(scope) = scope {
+            query.append_pair("scope", scope);
+        }
+    }
+    Ok(url.into())
+}
+
+fn read_authorization_code_from_stdin() -> Option<String> {
+    eprint!("Paste authorization code or callback URL: ");
+    if io::stderr().flush().is_err() {
+        return None;
+    }
+    let mut buf = String::new();
+    if io::stdin().read_line(&mut buf).is_err() {
+        return None;
+    }
+    let trimmed = buf.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Extract code and state parameters from a URL's query string.
+/// Returns Some((code, state)) if code is found, None otherwise.
+fn extract_code_and_state_from_query(url: &Url) -> Option<(String, Option<String>)> {
+    let mut code: Option<String> = None;
+    let mut state: Option<String> = None;
+    for (k, v) in url.query_pairs() {
+        if k == "code" {
+            code = Some(v.to_string());
+        } else if k == "state" {
+            state = Some(v.to_string());
+        }
+    }
+    code.map(|c| (c, state))
+}
+
+fn parse_authorization_code_input(input: &str) -> Option<(String, Option<String>)> {
+    if let Some((_, query)) = input.split_once('?') {
+        // Try parsing as a full URL first
+        if let Ok(url) = Url::parse(input) {
+            return extract_code_and_state_from_query(&url);
+        }
+        // Fallback: parse as query string only
+        let url_like = format!("https://placeholder.local/?{}", query);
+        if let Ok(url) = Url::parse(&url_like) {
+            return extract_code_and_state_from_query(&url);
+        }
+    }
+
+    // Plain code input (no query string)
+    Some((input.trim().to_string(), None))
+}
+
 async fn exchange_token(
     client: &Client,
     token_endpoint: &str,
@@ -754,6 +1092,78 @@ mod tests {
             endpoint.as_deref(),
             Some("https://github.com/login/device/code")
         );
+    }
+
+    #[test]
+    fn parse_authorization_code_input_supports_plain_code() {
+        let parsed = parse_authorization_code_input("abc123").unwrap();
+        assert_eq!(parsed.0, "abc123");
+        assert!(parsed.1.is_none());
+    }
+
+    #[test]
+    fn parse_authorization_code_input_supports_callback_url() {
+        let parsed =
+            parse_authorization_code_input("http://127.0.0.1/callback?code=abc123&state=xyz")
+                .unwrap();
+        assert_eq!(parsed.0, "abc123");
+        assert_eq!(parsed.1.as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn parse_authorization_code_input_supports_query_string_only() {
+        let parsed = parse_authorization_code_input("?code=abc123&state=xyz").unwrap();
+        assert_eq!(parsed.0, "abc123");
+        assert_eq!(parsed.1.as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn build_authorize_url_includes_pkce_params() {
+        let url = build_authorize_url(
+            "https://example.com/authorize",
+            "client-1",
+            "http://127.0.0.1/callback",
+            Some("scope:a scope:b"),
+            "state-1",
+            "challenge-1",
+        )
+        .unwrap();
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("client_id=client-1"));
+        assert!(url.contains("code_challenge=challenge-1"));
+        assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn endpoint_origin_extracts_host_and_scheme() {
+        let origin = endpoint_origin("https://mcp.notion.com/mcp").unwrap();
+        assert_eq!(origin, "https://mcp.notion.com");
+    }
+
+    #[test]
+    fn endpoint_origin_preserves_non_standard_port() {
+        let origin = endpoint_origin("https://mcp.example.com:8443/mcp").unwrap();
+        assert_eq!(origin, "https://mcp.example.com:8443");
+    }
+
+    #[test]
+    fn dynamic_registration_request_uses_expected_defaults() {
+        let req = DynamicClientRegistrationRequest {
+            client_name: "uxc".to_string(),
+            client_uri: Some("https://example.com".to_string()),
+            redirect_uris: vec!["http://127.0.0.1/callback".to_string()],
+            grant_types: vec![
+                "authorization_code".to_string(),
+                "refresh_token".to_string(),
+            ],
+            response_types: vec!["code".to_string()],
+            token_endpoint_auth_method: "none".to_string(),
+            scope: Some("read write".to_string()),
+        };
+        let json = serde_json::to_value(req).unwrap();
+        assert_eq!(json["token_endpoint_auth_method"], "none");
+        assert_eq!(json["grant_types"][0], "authorization_code");
+        assert_eq!(json["grant_types"][1], "refresh_token");
     }
 
     #[test]

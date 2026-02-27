@@ -108,6 +108,8 @@ impl std::str::FromStr for AuthType {
 pub enum OAuthFlow {
     #[serde(rename = "device_code")]
     DeviceCode,
+    #[serde(rename = "authorization_code")]
+    AuthorizationCode,
     #[serde(rename = "client_credentials")]
     ClientCredentials,
 }
@@ -527,6 +529,7 @@ impl Profiles {
     }
 
     /// Get credential count.
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.profiles.len()
     }
