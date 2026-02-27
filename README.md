@@ -646,7 +646,7 @@ See [docs/oauth-mcp-http.md](docs/oauth-mcp-http.md) for details.
 
 ## Development Status
 
-**Current Version**: v0.1.0 (Alpha)
+**Current Version**: v0.3.0
 
 **Supported Protocols**:
 - ✅ OpenAPI 3.x
