@@ -8,6 +8,7 @@ description: Operate Notion workspace content through Notion MCP using the UXC C
 Use this skill to run Notion MCP operations through `uxc` with OAuth and guarded write behavior.
 
 Always use the `uxc` skill (trigger: `$uxc`) as the execution layer for discovery, schema inspection, and tool calls.
+For OAuth lifecycle and error recovery, follow `$uxc` skill guidance (OAuth and Binding + Error Handling sections).
 
 ## Prerequisites
 
@@ -16,28 +17,25 @@ Always use the `uxc` skill (trigger: `$uxc`) as the execution layer for discover
 - OAuth callback listener is reachable (default examples use `http://127.0.0.1:8788/callback`).
 - `uxc` skill is available for generic discovery/describe/execute patterns.
 
-## Core Workflow
+## Core Workflow (Notion-Specific)
 
-1. Probe access without auth assumptions:
-   - `uxc https://mcp.notion.com/mcp describe notion-fetch`
-   - If this succeeds, keep current auth/binding state and continue.
-2. If probe fails due to auth, run OAuth authorization code flow (dynamic client registration first):
+1. Ensure endpoint mapping exists:
+   - `uxc auth binding match https://mcp.notion.com/mcp`
+2. If mapping/auth is not ready, start OAuth login:
    - `uxc auth oauth login notion-mcp --endpoint https://mcp.notion.com/mcp --flow authorization_code --redirect-uri http://127.0.0.1:8788/callback --scope read --scope write`
    - Prompt user to open the printed authorization URL.
    - Ask user to paste the full callback URL after consent.
-3. Bind endpoint to the credential (so runtime can auto-match auth):
+3. Bind endpoint to the credential:
    - `uxc auth binding add --id notion-mcp --host mcp.notion.com --path-prefix /mcp --scheme https --credential notion-mcp --priority 100`
 4. Recommend creating a local shortcut command for repeated calls:
    - `uxc link notion-mcp-cli https://mcp.notion.com/mcp`
-5. Verify runtime path after binding:
-   - `uxc https://mcp.notion.com/mcp describe notion-fetch`
-6. Discover tools and inspect schema before execution:
+5. Discover tools and inspect schema before execution:
    - `uxc https://mcp.notion.com/mcp list`
    - `uxc https://mcp.notion.com/mcp describe notion-fetch`
    - Common operations include `notion-search`, `notion-fetch`, and `notion-update-page`.
-7. Prefer read path first:
+6. Prefer read path first:
    - Search/fetch current state before any write.
-8. Execute writes only after explicit user confirmation:
+7. Execute writes only after explicit user confirmation:
    - For `notion-update-page` operations that may delete content, always confirm intent first.
 
 ## OAuth Interaction Template
@@ -50,8 +48,8 @@ Use this exact operator-facing flow:
    - Copy the full callback URL from browser address bar.
    - Paste the callback URL back in chat.
 3. Resume the waiting `uxc` login prompt with the pasted callback URL.
-4. Confirm success with:
-   - `uxc auth oauth info notion-mcp`
+4. Optionally confirm success with:
+   - `uxc auth oauth info <credential_id>`
 
 Do not ask user to manually extract or copy bearer tokens. Token exchange is handled by `uxc`.
 
@@ -63,13 +61,13 @@ Do not ask user to manually extract or copy bearer tokens. Token exchange is han
 - Call `notion-fetch` before `notion-create-pages` or `notion-update-page` when targeting database-backed content to obtain exact schema/property names.
 - Treat operations as high impact by default:
   - Require explicit user confirmation before create/update/move/delete-style actions.
-- If OAuth fails, follow structured error handling in `references/error-handling.md`.
+- If OAuth/auth fails, use `$uxc` skill OAuth/error playbooks first, then apply Notion-specific checks in this skill's references.
 
 ## References
 
-- OAuth and credential/binding setup:
+- Notion-specific auth notes (thin wrapper over `$uxc` OAuth guidance):
   - `references/oauth-and-binding.md`
 - Invocation patterns by task:
   - `references/usage-patterns.md`
-- Failure handling and retry guidance:
+- Notion-specific failure notes (thin wrapper over `$uxc` error guidance):
   - `references/error-handling.md`
