@@ -36,7 +36,7 @@ toml = "0.8"
 # Async Runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 async-trait = "0.1"
 futures = "0.3"
 
@@ -107,8 +107,24 @@ path = "src/lib.rs"
 default = []
 test-server = ["axum"]
 
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[[bin]]
+name = "uxc-test-grpc-server"
+path = "src/bin/uxc-test-grpc-server.rs"
+required-features = ["test-server"]
+
+[[bin]]
+name = "uxc-test-mcp-http-server"
+path = "src/bin/uxc-test-mcp-http-server.rs"
+required-features = ["test-server"]
+
+[[bin]]
+name = "uxc-test-mcp-stdio-server"
+path = "src/bin/uxc-test-mcp-stdio-server.rs"
+required-features = ["test-server"]
