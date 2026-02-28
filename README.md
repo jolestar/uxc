@@ -9,238 +9,90 @@
 
 UXC is a schema-driven, multi-protocol RPC execution runtime.
 
-It turns remote, schema-exposed services into executable command-line capabilities — without SDKs, code generation, or preconfigured server aliases.
+It turns remote schema-exposed interfaces into executable command-line capabilities without SDKs,
+code generation, or endpoint pre-registration.
 
-If a service exposes a machine-readable interface, UXC can discover it, understand it, and execute it.
+## What Is UXC
 
----
+Modern services increasingly expose machine-readable interface metadata.
+UXC treats those schemas as runtime execution contracts:
 
-## Vision
+- Discover operations from a host
+- Inspect operation inputs/outputs
+- Execute operations with structured input
+- Return deterministic JSON envelopes by default
 
-Modern systems increasingly expose machine-readable schemas:
+If a target can describe itself, UXC can usually call it.
 
-* OpenAPI (`/openapi.json`)
-* gRPC reflection
-* MCP (Model Context Protocol)
-* GraphQL introspection
-* JSON-RPC (OpenRPC discovery)
-* WSDL (SOAP)
+## Why It Exists
 
-Yet interacting with them still requires:
+Teams and agents often need to interact with many protocol styles:
+OpenAPI, GraphQL, gRPC, MCP, and JSON-RPC.
 
-* Static client generation
-* SDK installation
-* Custom configuration files
-* Or embedding tool definitions into AI prompts
+Traditional workflows create repeated overhead:
 
-UXC removes that friction.
+- language-specific SDK setup
+- generated clients that drift from server reality
+- one-off wrappers for each endpoint
+- large embedded tool schemas in agent prompts
 
-It provides a **universal execution layer** that dynamically transforms remote schema definitions into immediately usable commands.
+UXC provides one execution layer across protocols with URL-first invocation.
 
-Schema becomes execution.
+## Core Capabilities
 
----
+- URL-first usage: call endpoints directly, no server alias required
+- Multi-protocol detection and adapter routing
+- Schema-driven operation discovery (`list`, `describe`, `help`)
+- Structured invocation (`--input-json`, positional JSON, key-value args)
+- Deterministic JSON envelopes for automation and agents
+- Auth model with reusable credentials and endpoint bindings
+- Host shortcut commands via `uxc link`
 
-## Core Principles
+Supported protocols:
 
-### 1. URL-First, Not Config-First
+- OpenAPI / Swagger
+- gRPC (server reflection)
+- GraphQL (introspection)
+- MCP (HTTP and stdio)
+- JSON-RPC (OpenRPC-based discovery)
 
-UXC does not require registering server aliases.
+## Architecture Snapshot
 
-```bash
-uxc petstore3.swagger.io/api/v3 list
-uxc petstore3.swagger.io/api/v3 get:/pet/{petId} --input-json '{"petId":1}'
+UXC keeps protocol diversity behind one execution contract:
+
+```text
+User / Skill / Agent
+        ↓
+      UXC CLI
+        ↓
+ Protocol Detector
+        ↓
+   Adapter Layer
+ (OpenAPI/gRPC/GraphQL/MCP/JSON-RPC)
+        ↓
+  Remote Endpoint
 ```
 
-Any compliant endpoint can be called directly.
-For common HTTP targets, UXC infers `https://` when the scheme is omitted.
+This design keeps invocation UX stable while allowing protocol-specific internals.
 
-This makes UXC safe to use inside:
+## Target Use Cases
 
-* Automation scripts
-* CI pipelines
-* AI skills and agents
-* Sandboxed execution environments
+- AI agents and skills that need deterministic remote tool execution
+- CI/CD and automation jobs that need schema-driven calls without SDK setup
+- Cross-protocol integration testing with one command contract
+- Controlled runtime environments where JSON envelopes and predictable errors matter
 
----
+## Non-Goals
 
-### 2. Schema-Driven Execution
+UXC is not:
 
-UXC automatically:
+- a code generator
+- an SDK framework
+- an API gateway or reverse proxy
 
-* Detects protocol type
-* Retrieves remote schema
-* Generates contextual help
-* Validates arguments
-* Executes calls
-* Returns structured JSON by default
+UXC is an execution interface for schema-exposed remote capabilities.
 
-No manual client definitions required.
-
----
-
-### 3. Multi-Protocol by Design
-
-UXC supports multiple schema-exposing protocols through adapters:
-
-* OpenAPI / Swagger
-* gRPC (with reflection)
-* MCP
-* GraphQL
-* JSON-RPC (with OpenRPC)
-* Extensible adapter system
-
-The CLI interface remains consistent across protocols.
-
----
-
-### 4. Deterministic Machine Output
-
-`uxc ...` outputs a stable JSON envelope by default:
-
-```json
-{
-  "ok": true,
-  "kind": "call_result",
-  "protocol": "openapi",
-  "endpoint": "https://petstore3.swagger.io/api/v3",
-  "operation": "get:/pet/{petId}",
-  "data": { ... },
-  "meta": {
-    "version": "v1",
-    "duration_ms": 128
-  }
-}
-```
-
-Command failures are structured and predictable:
-
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "INVALID_ARGUMENT",
-    "message": "Field 'id' must be an integer"
-  },
-  "meta": {
-    "version": "v1"
-  }
-}
-```
-
-Use `--text` (or `--format text`) for human-readable output.
-
-Global discovery commands are also JSON-first:
-
-```bash
-uxc
-uxc help
-uxc -h
-uxc cache
-uxc auth credential
-```
-
-Use `--text` when you want CLI-style help text:
-
-```bash
-uxc --text help
-uxc --text -h
-uxc --text cache
-```
-
-If an operation ID conflicts with a CLI keyword (for example `help`/`list`), use explicit `call`:
-
-```bash
-uxc <host> call <operation_id> --input-json '{...}'
-uxc <host> call <operation_id> '{...}'
-```
-
-This makes UXC ideal for:
-
-* Shell pipelines
-* Agent runtimes
-* Skill systems
-* Infrastructure automation
-
----
-
-## Host Shortcut
-
-Create a local shortcut command bound to a host:
-
-```bash
-uxc link petcli petstore3.swagger.io/api/v3
-petcli list
-petcli describe get:/pet/{petId}
-```
-
-Remove the shortcut by deleting the generated file:
-
-```bash
-# macOS/Linux
-which petcli
-rm ~/.local/bin/petcli
-
-# Windows (PowerShell)
-Get-Command petcli
-Remove-Item "$HOME\\.uxc\\bin\\petcli.cmd"
-```
-
-Tip: prefer namespaced shortcuts like `acme-petcli` to reduce naming conflicts.
-On Windows, `uxc link` creates `.cmd` launchers and defaults to `$HOME\\.uxc\\bin`.
-
----
-
-## Cache Management
-
-```bash
-# View cache statistics
-uxc cache stats
-
-# Clear cache for specific endpoint
-uxc cache clear petstore3.swagger.io/api/v3
-
-# Clear all cache
-uxc cache clear --all
-
-# Disable cache for this operation
-uxc petstore3.swagger.io/api/v3 list --no-cache
-
-# Use custom TTL (in seconds)
-uxc petstore3.swagger.io/api/v3 list --cache-ttl 3600
-```
-
-## Debugging and Logging
-
-UXC uses structured logging with the `tracing` crate. By default, only warnings and errors are displayed.
-
-```bash
-# Default: warnings and errors only
-uxc petstore3.swagger.io/api/v3 list
-
-# Enable info logs (HTTP requests, responses, etc.)
-RUST_LOG=info uxc petstore3.swagger.io/api/v3 list
-
-# Enable debug logs (detailed debugging information)
-RUST_LOG=debug uxc petstore3.swagger.io/api/v3 list
-
-# Enable trace logs (maximum verbosity)
-RUST_LOG=trace uxc petstore3.swagger.io/api/v3 list
-
-# Enable logs for specific modules only
-RUST_LOG=uxc::adapters::openapi=debug uxc petstore3.swagger.io/api/v3 list
-```
-
-**Log Levels:**
-- `error` - Critical failures that prevent operation completion
-- `warn` - **[Default]** Non-critical issues and warnings
-- `info` - Informational messages (HTTP requests, protocol detection, etc.)
-- `debug` - Detailed debugging information
-- `trace` - Extremely verbose tracing information
-
-Logs are written to stderr to avoid interfering with JSON output on stdout.
-
-## Installation
+## Install
 
 ### Homebrew (macOS/Linux)
 
@@ -255,7 +107,7 @@ brew install uxc
 curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash
 ```
 
-If you prefer to review before execution:
+Review before running:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh -o install-uxc.sh
@@ -266,7 +118,7 @@ bash install-uxc.sh
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash -s -- -v v0.1.1
+curl -fsSL https://raw.githubusercontent.com/holon-run/uxc/main/scripts/install.sh | bash -s -- -v v0.3.0
 ```
 
 ### Cargo
@@ -283,413 +135,186 @@ cd uxc
 cargo install --path .
 ```
 
-### Codex Skill (Reusable by Other Skills)
+## Quickstart (3 Minutes)
 
-Install the built-in `uxc` skill from this repository:
+Most HTTP examples omit the scheme for brevity.
+For public hosts, UXC infers `https://` when omitted.
 
-```bash
-python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo holon-run/uxc \
-  --path skills/uxc
-```
-
-After installation, restart Codex to load the skill.
-
-## Example Usage
-
-Most HTTP examples omit the scheme for brevity. Add `https://` explicitly if you prefer strictness.
-
-### Operation ID Conventions
-
-UXC uses protocol-native, machine-friendly `operation_id` values:
-
-- OpenAPI: `method:/path` (e.g. `get:/users/{id}`, `post:/pet`)
-- gRPC: `Service/Method`
-- GraphQL: `query/viewer`, `mutation/addStar`, `subscription/onEvent`
-- MCP: tool name (e.g. `ask_question`)
-- JSON-RPC: method name (e.g. `eth_getBalance`, `net_version`)
-
-### OpenAPI / REST APIs
+1. Discover operations:
 
 ```bash
-# List available operations
 uxc petstore3.swagger.io/api/v3 list
+```
 
-# Schema-separated service: runtime endpoint and schema URL are different
-uxc api.github.com list \
-  --schema-url https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
+2. Inspect operation schema:
 
-# Get operation help
+```bash
 uxc petstore3.swagger.io/api/v3 describe get:/pet/{petId}
+# equivalent help path:
 uxc petstore3.swagger.io/api/v3 get:/pet/{petId} help
+```
 
-# Execute with parameters
+3. Execute with structured input:
+
+```bash
 uxc petstore3.swagger.io/api/v3 get:/pet/{petId} --input-json '{"petId":1}'
-
-# Execute with bare JSON positional payload
-uxc petstore3.swagger.io/api/v3 get:/pet/{petId} '{"petId":1}'
-
-# Execute with JSON input
-uxc petstore3.swagger.io/api/v3 call post:/pet --input-json '{"id":10001,"name":"codex-dog","photoUrls":["https://petstore3.swagger.io/favicon-32x32.png"],"status":"available"}'
 ```
 
-### gRPC Services
+If an operation name conflicts with a CLI keyword (for example `help` or `list`),
+use the explicit `call` form:
 
 ```bash
-# List all services via reflection
-uxc grpcb.in:9000 list
-
-# Call a unary RPC
-uxc grpcb.in:9000 addsvc.Add/Sum --input-json '{"a":1,"b":2}'
+uxc <host> call <operation_id> --input-json '{...}'
 ```
 
-Note: gRPC unary invocation uses the `grpcurl` binary at runtime.
+## Protocol Examples (One Each)
 
-### GraphQL APIs
+Operation ID conventions:
 
-```bash
-# List available queries/mutations/subscriptions
-uxc countries.trevorblades.com list
-
-# Execute a query
-uxc countries.trevorblades.com query/continents
-
-# Execute with parameters
-uxc countries.trevorblades.com query/country --input-json '{"code":"US"}'
-```
-
-### MCP (Model Context Protocol)
-
-```bash
-# HTTP transport (recommended for production)
-uxc mcp.deepwiki.com/mcp list
-uxc mcp.deepwiki.com/mcp ask_question --input-json '{"repoName":"holon-run/uxc","question":"What does this project do?"}'
-
-# If a tool name conflicts with CLI subcommands, use explicit call
-uxc mcp.deepwiki.com/mcp call <tool_name> --input-json '{...}'
-
-# stdio transport (for local development)
-uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list
-uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list_directory --input-json '{"path":"/tmp"}'
-```
-
-### JSON-RPC (OpenRPC)
-
-```bash
-# Discover methods (requires rpc.discover or openrpc.json)
-uxc fullnode.mainnet.sui.io list
-
-# Describe one method
-uxc fullnode.mainnet.sui.io describe sui_getLatestCheckpointSequenceNumber
-
-# Execute a method
-uxc fullnode.mainnet.sui.io sui_getLatestCheckpointSequenceNumber
-```
-
-Note: JSON-RPC support is OpenRPC-driven for predictable `list/describe` discovery.
-
-## Public Test Endpoints (No API Key)
-
-These endpoints are useful for protocol availability checks without API keys.
-Verified on 2026-02-25.
+- OpenAPI: `method:/path` (example: `get:/users/{id}`)
+- gRPC: `Service/Method`
+- GraphQL: `query/viewer`, `mutation/createUser`
+- MCP: tool name (example: `ask_question`)
+- JSON-RPC: method name (example: `eth_getBalance`)
 
 ### OpenAPI
 
-- Endpoint: `https://petstore3.swagger.io/api/v3`
-- Verify schema:
+```bash
+uxc petstore3.swagger.io/api/v3 list
+uxc petstore3.swagger.io/api/v3 get:/pet/{petId} --input-json '{"petId":1}'
+```
+
+For schema-separated services, you can override schema source:
 
 ```bash
-curl -sS https://petstore3.swagger.io/api/v3/openapi.json | jq -r '.openapi, .info.title'
+uxc api.github.com list \
+  --schema-url https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json
 ```
+
+### gRPC
+
+```bash
+uxc grpcb.in:9000 list
+uxc grpcb.in:9000 addsvc.Add/Sum --input-json '{"a":1,"b":2}'
+```
+
+Note: gRPC unary runtime invocation requires `grpcurl` on `PATH`.
 
 ### GraphQL
 
-- Endpoint: `https://countries.trevorblades.com/`
-- Verify introspection:
+```bash
+uxc countries.trevorblades.com list
+uxc countries.trevorblades.com query/country --input-json '{"code":"US"}'
+```
+
+### MCP
 
 ```bash
-curl -sS https://countries.trevorblades.com/ \
-  -H 'content-type: application/json' \
-  --data '{"query":"{ __schema { queryType { name } } }"}' \
-  | jq -r '.data.__schema.queryType.name'
+uxc mcp.deepwiki.com/mcp list
+uxc mcp.deepwiki.com/mcp ask_question --input-json '{"repoName":"holon-run/uxc","question":"What does this project do?"}'
 ```
 
-### gRPC (Server Reflection)
-
-- Endpoint (plaintext): `grpcb.in:9000`
-- Endpoint (TLS): `grpcb.in:9001`
-- Verify reflection:
+### JSON-RPC
 
 ```bash
-grpcurl -plaintext grpcb.in:9000 list
-grpcurl grpcb.in:9001 list
+uxc fullnode.mainnet.sui.io list
+uxc fullnode.mainnet.sui.io sui_getLatestCheckpointSequenceNumber
 ```
 
-### MCP (HTTP)
+## Skills
 
-- Endpoint: `https://mcp.deepwiki.com/mcp`
-- Verify `initialize` (DeepWiki uses streamable HTTP/SSE response):
+UXC provides one canonical skill plus scenario-specific official wrappers.
+Use `uxc` skill as the shared execution layer, and add wrappers when they fit your workflow.
 
-```bash
-curl -sS https://mcp.deepwiki.com/mcp \
-  -H 'content-type: application/json' \
-  -H 'accept: application/json, text/event-stream' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"uxc-check","version":"0.1"}}}'
-```
+| Skill | Purpose | Path |
+| --- | --- | --- |
+| `uxc` | Canonical schema discovery and multi-protocol execution layer | [`skills/uxc/SKILL.md`](skills/uxc/SKILL.md) |
+| `deepwiki` | Query repository documentation and ask codebase questions | [`skills/deepwiki/SKILL.md`](skills/deepwiki/SKILL.md) |
+| `context7` | Query up-to-date library documentation/examples over MCP | [`skills/context7/SKILL.md`](skills/context7/SKILL.md) |
+| `notion-mcp-skill` | Operate Notion MCP workflows with OAuth-aware guidance | [`skills/notion-mcp-skill/SKILL.md`](skills/notion-mcp-skill/SKILL.md) |
 
-Note: this endpoint is publicly reachable without an API key for basic calls. Some MCP clients that only expect JSON (not SSE) may need transport updates.
+See [`docs/skills.md`](docs/skills.md) for install methods and maintenance rules.
 
-### MCP (stdio, local)
+## Output and Help Conventions
 
-- Command: `npx -y @modelcontextprotocol/server-filesystem /tmp`
-- This is useful as a local no-key MCP baseline.
-
----
-
-## Automatic Protocol Detection
-
-UXC determines the protocol via lightweight probing:
-
-1. Attempt MCP stdio/HTTP discovery
-2. Attempt GraphQL introspection
-3. Check OpenAPI schema sources:
-   - `--schema-url` override
-   - user/builtin schema mappings
-   - default well-known OpenAPI endpoints (`/openapi.json`, `/swagger.json`, etc.)
-4. Attempt JSON-RPC OpenRPC discovery
-5. Attempt gRPC reflection
-6. Fallback or fail gracefully
-
-Each protocol is handled by a dedicated adapter.
-
-### OpenAPI Schema Mapping
-
-For services where the OpenAPI document is hosted separately from the runtime endpoint
-(for example `api.github.com`), UXC supports:
-
-1. Explicit override via `--schema-url`
-2. Builtin mappings for known services
-3. User mappings in `~/.uxc/schema_mappings.json`
-
-Example user mapping file:
-
-```json
-{
-  "version": 1,
-  "openapi": [
-    {
-      "host": "api.github.com",
-      "path_prefix": "/",
-      "schema_url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
-      "priority": 100
-    }
-  ]
-}
-```
-
-For tests or custom environments, the mapping file path can be overridden via:
-`UXC_SCHEMA_MAPPINGS_FILE=/path/to/schema_mappings.json`.
-
----
-
-## Architecture Overview
-
-```
-User / Skill / Agent
-          ↓
-          UXC CLI
-          ↓
-    Protocol Detector
-          ↓
-       Adapter Layer
-   ├── OpenAPI Adapter
-   ├── gRPC Adapter
-   ├── MCP Adapter
-   ├── GraphQL Adapter
-   ├── JSON-RPC Adapter
-          ↓
-     Remote Endpoint
-```
-
-Optional:
-
-```
-UXCd (local daemon)
-  - Connection pooling
-  - Schema caching
-  - Authentication management
-  - Rate limiting
-```
-
-The CLI works independently, but can transparently use the daemon for performance and stability.
-
----
-
-## Target Use Cases
-
-### AI Agents & Skills
-
-* Dynamically call remote capabilities
-* Avoid injecting large tool schemas into context
-* Maintain deterministic execution boundaries
-* Reuse the repository skill at `skills/uxc` as the shared API execution layer
-
-### Infrastructure & DevOps
-
-* Replace SDK generation with runtime discovery
-* Interact with heterogeneous services via a unified interface
-* Simplify testing across protocols
-
-### Execution Sandboxes
-
-* Provide a controlled, auditable capability layer
-* Enforce allowlists and rate limits
-* Record structured invocation logs
-
----
-
-## Non-Goals
-
-UXC is not:
-
-* A code generator
-* An SDK replacement
-* An API gateway
-* A reverse proxy
-
-It is an execution interface.
-
----
-
-## Why Universal X-Protocol Call?
-
-Because infrastructure is no longer protocol-bound.
-
-Because services describe themselves.
-
-Because execution should be dynamic.
-
-UXC makes remote schema executable.
-
-## Auth Model
-
-UXC uses two auth resources:
-
-- **Credentials**: secret material and auth type
-- **Bindings**: endpoint matching rules (`scheme` + `host` + optional `path_prefix`) pointing to a credential
+UXC is JSON-first by default.
+Use `--text` (or `--format text`) when you want human-readable CLI output.
 
 Examples:
 
 ```bash
-# Create a bearer credential (literal secret)
-uxc auth credential set deepwiki --auth-type bearer --secret "$DEEPWIKI_TOKEN"
+uxc
+uxc help
+uxc <host> help
+uxc <host> <operation_id> help
+uxc --text help
+```
 
-# Or reference an environment variable
-uxc auth credential set github --auth-type bearer --secret-env GITHUB_TOKEN
+Success envelope shape:
 
-# Bind endpoint to a credential (auto-match at runtime)
+```json
+{
+  "ok": true,
+  "kind": "call_result",
+  "protocol": "openapi",
+  "endpoint": "https://petstore3.swagger.io/api/v3",
+  "operation": "get:/pet/{petId}",
+  "data": {},
+  "meta": {
+    "version": "v1",
+    "duration_ms": 128
+  }
+}
+```
+
+Failure envelope shape:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "Field 'id' must be an integer"
+  },
+  "meta": {
+    "version": "v1"
+  }
+}
+```
+
+## Auth (Credentials + Bindings)
+
+UXC authentication has two resources:
+
+- Credentials: secret material and auth type
+- Bindings: endpoint matching rules that select a credential
+
+Example:
+
+```bash
+uxc auth credential set deepwiki --auth-type bearer --secret-env DEEPWIKI_TOKEN
 uxc auth binding add --id deepwiki-mcp --host mcp.deepwiki.com --path-prefix /mcp --scheme https --credential deepwiki --priority 100
 ```
 
-## OAuth For MCP HTTP
+OAuth for MCP HTTP is supported (device code, client credentials, authorization code + PKCE).
+See [`docs/oauth-mcp-http.md`](docs/oauth-mcp-http.md) for full workflows.
 
-`uxc` now supports OAuth for MCP HTTP endpoints with login, token persistence, refresh, and retry.
+## Docs Map
 
-Quick examples:
-
-```bash
-# Device Code flow
-uxc auth oauth login mcp-prod \
-  --endpoint https://example.com/mcp \
-  --flow device_code \
-  --client-id your-client-id \
-  --scope "openid profile"
-
-# Client Credentials flow
-uxc auth oauth login mcp-ci \
-  --endpoint https://example.com/mcp \
-  --flow client_credentials \
-  --client-id your-client-id \
-  --client-secret your-client-secret \
-  --scope "tools.read"
-
-# Authorization Code + PKCE flow (for providers like Notion MCP)
-uxc auth oauth login notion-mcp \
-  --endpoint https://mcp.notion.com/mcp \
-  --flow authorization_code \
-  --redirect-uri http://127.0.0.1:8788/callback \
-  --scope "read write"
-```
-
-`--client-id` is optional for `authorization_code`. If omitted, `uxc` will try dynamic client
-registration from provider metadata.
-
-Manual management commands:
-
-```bash
-uxc auth oauth info <credential_id>
-uxc auth oauth refresh <credential_id>
-uxc auth oauth logout <credential_id>
-```
-
-OAuth runtime errors are emitted as structured codes:
-
-- `OAUTH_REQUIRED`
-- `OAUTH_DISCOVERY_FAILED`
-- `OAUTH_TOKEN_EXCHANGE_FAILED`
-- `OAUTH_REFRESH_FAILED`
-- `OAUTH_SCOPE_INSUFFICIENT`
-
-See [docs/oauth-mcp-http.md](docs/oauth-mcp-http.md) for details.
-
----
-
-## Development Status
-
-**Current Version**: v0.3.0
-
-**Supported Protocols**:
-- ✅ OpenAPI 3.x
-- ✅ gRPC (with Server Reflection Protocol)
-- ✅ GraphQL (with Introspection)
-- ✅ MCP (Model Context Protocol) - HTTP & stdio transports
-- ✅ JSON-RPC (with OpenRPC discovery)
-
-**Platforms**:
-- ✅ Linux (x86_64)
-- ✅ macOS (x86_64, ARM64)
-- ✅ Windows (x86_64)
-
-**Known Limitations**:
-- gRPC currently supports unary invocation only
-- gRPC runtime calls require `grpcurl` to be installed
-- No connection pooling yet
-
----
+- Extended quickstart and protocol walkthroughs: [`docs/quickstart.md`](docs/quickstart.md)
+- Public no-key endpoints for protocol checks: [`docs/public-endpoints.md`](docs/public-endpoints.md)
+- Logging and troubleshooting with `RUST_LOG`: [`docs/logging.md`](docs/logging.md)
+- OpenAPI schema mapping and `--schema-url`: [`docs/schema-mapping.md`](docs/schema-mapping.md)
+- Skills overview and install/maintenance guidance: [`docs/skills.md`](docs/skills.md)
+- Release process: [`docs/release.md`](docs/release.md)
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+Contributions are welcome.
 
-**Development Requirements**:
-- All code must be formatted with `cargo fmt`
-- No clippy warnings allowed
-- Minimum 65% code coverage required
-- All tests must pass
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development workflow, testing guidelines, and coverage instructions.
-
-**Areas of Interest**:
-- Connection pooling
-- Authentication profiles
-- Additional protocol adapters (SOAP/WSDL, Thrift, etc.)
-- Performance optimizations
-- UXCd daemon
-- Capability allowlists
-- Audit logging
-
----
+- Development workflow and quality bar: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- CI and release flows: [GitHub Actions](https://github.com/holon-run/uxc/actions)
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see [`LICENSE`](LICENSE).
