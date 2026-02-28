@@ -132,7 +132,7 @@ fn operation_help_works_with_dynamic_syntax() {
         .arg(server.url())
         .arg("--no-cache")
         .arg("get:/pets")
-        .arg("help")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -172,7 +172,7 @@ fn host_help_supports_url_without_scheme() {
     let output = uxc_command()
         .arg(without_http_scheme(&server.url()))
         .arg("--no-cache")
-        .arg("help")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -225,7 +225,7 @@ fn host_help_uses_link_name_for_next_commands_when_env_set() {
         .env("UXC_LINK_NAME", "petcli")
         .arg(server.url())
         .arg("--no-cache")
-        .arg("help")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -346,19 +346,98 @@ fn auth_credential_without_subcommand_outputs_subcommand_help_json() {
 }
 
 #[test]
-fn call_and_link_help_flags_output_subcommand_help_json() {
-    let call = uxc_command()
-        .arg("call")
-        .arg("-h")
-        .output()
-        .expect("failed to run uxc call -h");
-    assert!(call.status.success(), "command should succeed");
-    let call_json: serde_json::Value =
-        serde_json::from_slice(&call.stdout).expect("stdout should be valid JSON");
-    assert_eq!(call_json["ok"], true);
-    assert_eq!(call_json["kind"], "subcommand_help");
-    assert_eq!(call_json["data"]["path"], "uxc call");
+fn host_help_keyword_is_treated_as_operation_literal() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
 
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("--no-cache")
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+    assert!(!output.status.success(), "command should fail");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+
+    let message = json["error"]["message"]
+        .as_str()
+        .expect("error.message should be a string");
+    assert!(
+        message.contains("Invalid operation ID format")
+            || message.contains("Unknown argument 'help'"),
+        "unexpected message: {}",
+        message
+    );
+}
+
+#[test]
+fn operation_help_keyword_is_not_a_help_alias() {
+    let mut server = mockito::Server::new();
+    let _schema = server
+        .mock("GET", "/openapi.json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "test", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "list pets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}"##,
+        )
+        .create();
+
+    let output = uxc_command()
+        .arg(server.url())
+        .arg("--no-cache")
+        .arg("get:/pets")
+        .arg("help")
+        .output()
+        .expect("failed to run uxc");
+
+    assert!(!output.status.success(), "command should fail");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("Unknown argument 'help'")),
+        "unexpected message: {}",
+        json["error"]["message"]
+    );
+}
+
+#[test]
+fn link_help_flag_outputs_subcommand_help_json() {
     let link = uxc_command()
         .arg("link")
         .arg("--help")
@@ -399,7 +478,7 @@ fn operation_help_supports_url_without_scheme() {
         .arg(without_http_scheme(&server.url()))
         .arg("--no-cache")
         .arg("get:/pets")
-        .arg("help")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -417,7 +496,7 @@ fn operation_help_supports_url_without_scheme() {
 }
 
 #[test]
-fn dynamic_operation_help_accepts_text_flag_after_help() {
+fn dynamic_operation_help_supports_text_output() {
     let mut server = mockito::Server::new();
     let _schema = server
         .mock("GET", "/openapi.json")
@@ -440,11 +519,11 @@ fn dynamic_operation_help_accepts_text_flag_after_help() {
         .create();
 
     let output = uxc_command()
+        .arg("--text")
         .arg(server.url())
         .arg("--no-cache")
         .arg("get:/pets")
-        .arg("help")
-        .arg("--text")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -505,7 +584,7 @@ fn operation_help_includes_openapi_request_body_schema() {
         .arg(server.url())
         .arg("--no-cache")
         .arg("post:/pet")
-        .arg("help")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -541,7 +620,7 @@ fn text_and_format_flags_are_mutually_exclusive() {
 }
 
 #[test]
-fn call_subcommand_executes_operation() {
+fn dynamic_operation_executes_operation() {
     let mut server = mockito::Server::new();
     let _schema = server
         .mock("GET", "/openapi.json")
@@ -572,7 +651,6 @@ fn call_subcommand_executes_operation() {
     let output = uxc_command()
         .arg(server.url())
         .arg("--no-cache")
-        .arg("call")
         .arg("get:/pets")
         .output()
         .expect("failed to run uxc");
@@ -652,77 +730,9 @@ fn dynamic_operation_accepts_bare_json_payload() {
 }
 
 #[test]
-fn call_subcommand_accepts_bare_json_payload() {
-    let mut server = mockito::Server::new();
-    let _schema = server
-        .mock("GET", "/openapi.json")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{
-  "openapi": "3.0.0",
-  "info": { "title": "test", "version": "1.0.0" },
-  "paths": {
-    "/echo": {
-      "post": {
-        "summary": "echo payload",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["message"],
-                "properties": {
-                  "message": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        "responses": { "200": { "description": "ok" } }
-      }
-    }
-  }
-}"#,
-        )
-        .create();
-    let _call = server
-        .mock("POST", "/echo")
-        .match_body(r#"{"message":"hello"}"#)
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"message":"hello"}"#)
-        .create();
-
-    let output = uxc_command()
-        .arg(server.url())
-        .arg("--no-cache")
-        .arg("call")
-        .arg("post:/echo")
-        .arg(r#"{"message":"hello"}"#)
-        .output()
-        .expect("failed to run uxc");
-
-    assert!(
-        output.status.success(),
-        "command should succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
-    assert_eq!(json["ok"], true);
-    assert_eq!(json["kind"], "call_result");
-    assert_eq!(json["operation"], "post:/echo");
-    assert_eq!(json["data"]["message"], "hello");
-}
-
-#[test]
-fn call_subcommand_rejects_conflicting_json_inputs() {
+fn dynamic_operation_rejects_conflicting_json_inputs() {
     let output = uxc_command()
         .arg("https://example.com")
-        .arg("call")
         .arg("post:/echo")
         .arg("--input-json")
         .arg(r#"{"message":"from-flag"}"#)
@@ -795,7 +805,7 @@ fn dynamic_operation_rejects_json_passed_to_args_flag() {
 }
 
 #[test]
-fn list_outputs_operation_id_and_display_name() {
+fn host_help_outputs_operation_id_and_display_name() {
     let mut server = mockito::Server::new();
     let _schema = server
         .mock("GET", "/openapi.json")
@@ -820,7 +830,7 @@ fn list_outputs_operation_id_and_display_name() {
     let output = uxc_command()
         .arg(server.url())
         .arg("--no-cache")
-        .arg("list")
+        .arg("-h")
         .output()
         .expect("failed to run uxc");
 
@@ -864,24 +874,24 @@ fn schema_url_override_supports_schema_separated_openapi_service() {
         .create();
     let schema_url = format!("{}/schema.json", schema_server.url());
 
-    let list_output = uxc_command()
+    let host_help_output = uxc_command()
         .arg(target_server.url())
         .arg("--no-cache")
         .arg("--schema-url")
         .arg(&schema_url)
-        .arg("list")
+        .arg("-h")
         .output()
-        .expect("failed to run uxc list");
+        .expect("failed to run uxc host help");
     assert!(
-        list_output.status.success(),
-        "list should succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&list_output.stdout),
-        String::from_utf8_lossy(&list_output.stderr)
+        host_help_output.status.success(),
+        "host help should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&host_help_output.stdout),
+        String::from_utf8_lossy(&host_help_output.stderr)
     );
-    let list_json: serde_json::Value =
-        serde_json::from_slice(&list_output.stdout).expect("stdout should be valid JSON");
-    assert_eq!(list_json["protocol"], "openapi");
-    assert!(list_json["data"]["operations"]
+    let host_help_json: serde_json::Value =
+        serde_json::from_slice(&host_help_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(host_help_json["protocol"], "openapi");
+    assert!(host_help_json["data"]["operations"]
         .as_array()
         .is_some_and(|ops| { ops.iter().any(|op| op["operation_id"] == "get:/pets") }));
 
@@ -890,10 +900,9 @@ fn schema_url_override_supports_schema_separated_openapi_service() {
         .arg("--no-cache")
         .arg("--schema-url")
         .arg(&schema_url)
-        .arg("call")
         .arg("get:/pets")
         .output()
-        .expect("failed to run uxc call");
+        .expect("failed to run uxc operation call");
     assert!(
         call_output.status.success(),
         "call should succeed\nstdout:\n{}\nstderr:\n{}",
@@ -959,24 +968,24 @@ fn user_schema_mapping_file_supports_schema_separated_openapi_service() {
     )
     .expect("failed to write schema mapping file");
 
-    let list_output = uxc_command()
+    let host_help_output = uxc_command()
         .arg(target_server.url())
         .arg("--no-cache")
-        .arg("list")
+        .arg("-h")
         .env("UXC_SCHEMA_MAPPINGS_FILE", &mapping_file_path)
         .output()
-        .expect("failed to run uxc list");
+        .expect("failed to run uxc host help");
     assert!(
-        list_output.status.success(),
-        "list should succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&list_output.stdout),
-        String::from_utf8_lossy(&list_output.stderr)
+        host_help_output.status.success(),
+        "host help should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&host_help_output.stdout),
+        String::from_utf8_lossy(&host_help_output.stderr)
     );
 
-    let list_json: serde_json::Value =
-        serde_json::from_slice(&list_output.stdout).expect("stdout should be valid JSON");
-    assert_eq!(list_json["protocol"], "openapi");
-    assert!(list_json["data"]["operations"]
+    let host_help_json: serde_json::Value =
+        serde_json::from_slice(&host_help_output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(host_help_json["protocol"], "openapi");
+    assert!(host_help_json["data"]["operations"]
         .as_array()
         .is_some_and(|ops| { ops.iter().any(|op| op["operation_id"] == "get:/pets") }));
 }
