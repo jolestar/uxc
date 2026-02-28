@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide expands the README quickstart with practical command patterns across supported protocols.
+This guide expands the README quickstart with practical command patterns for UXC (Universal X-Protocol CLI) across supported protocols.
 
 ## Prerequisites
 

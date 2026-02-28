@@ -1,6 +1,6 @@
 # Skills In This Repository
 
-This repository ships one canonical skill and several official scenario wrappers.
+This repository ships one canonical skill for UXC (Universal X-Protocol CLI) and several official scenario wrappers.
 
 ## Skill Catalog
 

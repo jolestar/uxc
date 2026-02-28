@@ -85,7 +85,7 @@ render_formula() {
 
   cat <<EOF
 class Uxc < Formula
-  desc "Universal X-Protocol Call"
+  desc "Universal X-Protocol CLI"
   homepage "https://github.com/${repo}"
   license "MIT"
   version "${version}"

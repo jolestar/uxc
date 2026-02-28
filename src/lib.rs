@@ -1,4 +1,4 @@
-//! UXC - Universal X-Protocol Call
+//! UXC - Universal X-Protocol CLI
 //!
 //! Schema-driven, multi-protocol RPC execution runtime.
 

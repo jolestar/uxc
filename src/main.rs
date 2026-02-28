@@ -45,7 +45,7 @@ enum OutputMode {
 
 #[derive(Parser)]
 #[command(name = "uxc")]
-#[command(about = "Universal X-Protocol Call", long_about = None)]
+#[command(about = "Universal X-Protocol CLI", long_about = None)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(disable_help_flag = true)]
 #[command(disable_help_subcommand = true)]
@@ -1035,7 +1035,7 @@ fn help_data_for_path(path: &[&str]) -> HelpData {
     match path {
         [] => HelpData {
             path: "uxc".to_string(),
-            about: "Universal X-Protocol Call".to_string(),
+            about: "Universal X-Protocol CLI".to_string(),
             usage: "uxc [OPTIONS] [URL] [COMMAND]".to_string(),
             commands: commands(&[
                 ("help", "Show global help"),
@@ -1279,7 +1279,7 @@ fn help_data_for_path(path: &[&str]) -> HelpData {
         },
         _ => HelpData {
             path: "uxc".to_string(),
-            about: "Universal X-Protocol Call".to_string(),
+            about: "Universal X-Protocol CLI".to_string(),
             usage: "uxc [OPTIONS] [URL] [COMMAND]".to_string(),
             commands: vec![],
             notes: vec![],

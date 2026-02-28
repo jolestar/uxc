@@ -1,13 +1,13 @@
 # UXC
 
-**Universal X-Protocol Call**
+**Universal X-Protocol CLI**
 
 [![CI](https://github.com/holon-run/uxc/workflows/CI/badge.svg)](https://github.com/holon-run/uxc/actions)
 [![Coverage](https://github.com/holon-run/uxc/workflows/Coverage/badge.svg)](https://github.com/holon-run/uxc/actions/workflows/coverage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org)
 
-UXC is a universal API calling CLI that lets you discover and invoke OpenAPI, gRPC, GraphQL,
+UXC is a universal X-protocol CLI that lets you discover and invoke OpenAPI, gRPC, GraphQL,
 MCP, and JSON-RPC interfaces directly from a URL.
 
 It turns remote schema-exposed interfaces into executable command-line operations without SDKs,
