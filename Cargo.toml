@@ -3,12 +3,12 @@ name = "uxc"
 version = "0.3.0"
 edition = "2021"
 authors = ["UXC Contributors"]
-description = "Universal X-Protocol Call - Schema-driven multi-protocol RPC execution runtime"
+description = "Universal API calling CLI for URL-first schema discovery and invocation across OpenAPI, gRPC, GraphQL, MCP, and JSON-RPC"
 license = "MIT"
 repository = "https://github.com/holon-run/uxc"
 homepage = "https://github.com/holon-run/uxc"
 readme = "README.md"
-keywords = ["rpc", "cli", "openapi", "grpc", "mcp"]
+keywords = ["cli", "rpc", "openapi", "graphql", "mcp"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
