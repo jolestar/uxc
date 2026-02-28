@@ -45,7 +45,7 @@ if ! rg -q '^description:\s*.+' "${SKILL_FILE}"; then
   fail "SKILL.md frontmatter must define a description"
 fi
 
-if ! rg -q 'https://mcp.notion.com/mcp' "${SKILL_FILE}"; then
+if ! rg -q 'mcp.notion.com/mcp' "${SKILL_FILE}"; then
   fail "SKILL.md must document Notion MCP endpoint"
 fi
 
@@ -61,6 +61,18 @@ if ! rg -q 'notion-update-page' "${SKILL_FILE}"; then
   fail "SKILL.md must mention notion-update-page"
 fi
 
+if ! rg -q 'command -v notion-mcp-cli' "${SKILL_FILE}"; then
+  fail "SKILL.md must include link command existence check"
+fi
+
+if ! rg -q 'uxc link notion-mcp-cli mcp.notion.com/mcp' "${SKILL_FILE}"; then
+  fail "SKILL.md must include fixed link creation command"
+fi
+
+if ! rg -q 'notion-mcp-cli list' "${SKILL_FILE}"; then
+  fail "SKILL.md must use notion-mcp-cli as default invocation path"
+fi
+
 for rel in \
   "references/usage-patterns.md" \
   "references/oauth-and-binding.md" \
@@ -70,24 +82,28 @@ for rel in \
   fi
 done
 
-if ! rg -q '(\$uxc|`uxc` skill)' "${SKILL_FILE}"; then
+if ! rg -q '`uxc` skill' "${SKILL_FILE}"; then
   fail "SKILL.md must reference uxc skill guidance for shared OAuth/error handling"
 fi
 
-if ! rg -q 'canonical OAuth and binding workflow, use `\$uxc` skill' "${SKILL_DIR}/references/oauth-and-binding.md"; then
-  fail "oauth-and-binding.md must be a thin wrapper pointing to $uxc guidance"
+if ! rg -q 'canonical OAuth and binding workflow, use `uxc` skill' "${SKILL_DIR}/references/oauth-and-binding.md"; then
+  fail "oauth-and-binding.md must be a thin wrapper pointing to uxc skill guidance"
 fi
 
-if ! rg -q 'canonical error taxonomy and OAuth recovery playbooks, use `\$uxc` skill' "${SKILL_DIR}/references/error-handling.md"; then
-  fail "error-handling.md must be a thin wrapper pointing to $uxc guidance"
+if ! rg -q 'canonical error taxonomy and OAuth recovery playbooks, use `uxc` skill' "${SKILL_DIR}/references/error-handling.md"; then
+  fail "error-handling.md must be a thin wrapper pointing to uxc skill guidance"
+fi
+
+if ! rg -q 'equivalent to `uxc mcp.notion.com/mcp' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
+  fail "Notion docs must include single-point fallback equivalence guidance"
+fi
+
+if rg -qi 'retry with .*suffix|append.*suffix|dynamic rename|auto-rename' "${SKILL_FILE}" "${SKILL_DIR}/references/"*.md; then
+  fail "Notion docs must not include dynamic command renaming guidance"
 fi
 
 if rg -q ' execute ' "${SKILL_FILE}"; then
   fail "SKILL.md must not include execute-form command examples"
-fi
-
-if rg -q ' --json ' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
-  fail "Notion skill docs must not include removed --json flag examples"
 fi
 
 if rg -q -- "--args '\\{" "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then

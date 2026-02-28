@@ -3,13 +3,13 @@
 ## Scope
 
 This file keeps Notion-specific OAuth notes only.
-For canonical OAuth and binding workflow, use `$uxc` skill:
+For canonical OAuth and binding workflow, use `uxc` skill:
 - section: `OAuth and credential/binding lifecycle`
 - file name in `$uxc`: `references/oauth-and-binding.md`
 
 ## Notion Endpoint Defaults
 
-- endpoint: `https://mcp.notion.com/mcp`
+- endpoint: `mcp.notion.com/mcp`
 - suggested scopes: `read`, `write`
 - callback example: `http://127.0.0.1:8788/callback`
 
@@ -17,7 +17,7 @@ For canonical OAuth and binding workflow, use `$uxc` skill:
 
 ```bash
 uxc auth oauth login notion-mcp \
-  --endpoint https://mcp.notion.com/mcp \
+  --endpoint mcp.notion.com/mcp \
   --flow authorization_code \
   --redirect-uri http://127.0.0.1:8788/callback \
   --scope read \
@@ -52,23 +52,27 @@ uxc auth binding add \
 Validate match:
 
 ```bash
-uxc auth binding match https://mcp.notion.com/mcp
+uxc auth binding match mcp.notion.com/mcp
 ```
 
 ## Notion Duplicate-Binding Tip
 
 If multiple bindings match Notion endpoint, verify with explicit credential against the same read call before removing stale bindings.
+Do not remove duplicates blindly based on names only.
 
-Recommended shortcut for repeated usage:
+Default fixed link command for this skill:
 
 ```bash
-uxc link notion-mcp-cli https://mcp.notion.com/mcp
+command -v notion-mcp-cli
+uxc link notion-mcp-cli mcp.notion.com/mcp
 ```
+
+If a conflicting command name exists and cannot be safely reused, stop and ask skill maintainers to update the fixed command name.
 
 Then run operation discovery/calls:
 
 ```bash
-uxc https://mcp.notion.com/mcp list
+uxc mcp.notion.com/mcp list
 notion-mcp-cli list
 notion-mcp-cli describe notion-fetch
 ```

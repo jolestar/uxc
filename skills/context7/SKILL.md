@@ -16,14 +16,17 @@ Use this skill to query library documentation and code examples.
 
 ## Core Workflow
 
-1. List available tools:
-   - `uxc https://mcp.context7.com/mcp list`
+1. Use fixed link command by default:
+   - `command -v context7-mcp-cli`
+   - If missing, create it: `uxc link context7-mcp-cli mcp.context7.com/mcp`
+   - `context7-mcp-cli list`
+   - If command conflict is detected and cannot be safely reused, stop and ask skill maintainers to pick a different fixed command name.
 
 2. Resolve a library name to get library ID:
-   - `uxc https://mcp.context7.com/mcp resolve-library-id --input-json '{"libraryName":"react","query":"useState hook"}'`
+   - `context7-mcp-cli resolve-library-id libraryName=react query='useState hook'`
 
 3. Query documentation:
-   - `uxc https://mcp.context7.com/mcp query-docs --input-json '{"libraryId":"/reactjs/react.dev","query":"how to use useState"}'`
+   - `context7-mcp-cli query-docs libraryId=/reactjs/react.dev query='how to use useState'`
 
 ## Available Tools
 
@@ -36,19 +39,25 @@ Use this skill to query library documentation and code examples.
 
 ```bash
 # First resolve the library
-uxc https://mcp.context7.com/mcp resolve-library-id --input-json '{"libraryName":"react","query":"React useState hook"}'
+context7-mcp-cli resolve-library-id libraryName=react query='React useState hook'
 ```
 
 ### Query specific documentation
 
 ```bash
-uxc https://mcp.context7.com/mcp query-docs --input-json '{"libraryId":"/reactjs/react.dev","query":"how to use useEffect"}'
+context7-mcp-cli query-docs '{"libraryId":"/reactjs/react.dev","query":"how to use useEffect"}'
 ```
 
 ### Query Node.js documentation
 
 ```bash
-uxc https://mcp.context7.com/mcp resolve-library-id --input-json '{"libraryName":"node","query":"file system"}'
+context7-mcp-cli resolve-library-id libraryName=node query='file system'
+```
+
+### Fallback input mode (only when positional JSON is inconvenient)
+
+```bash
+context7-mcp-cli query-docs --input-json '{"libraryId":"/reactjs/react.dev","query":"useRef"}'
 ```
 
 ## Notes
@@ -56,6 +65,8 @@ uxc https://mcp.context7.com/mcp resolve-library-id --input-json '{"libraryName"
 - Requires library name first, then use the returned libraryId for queries
 - Context7 provides version-specific, up-to-date documentation
 - Supports npm packages, Python libraries, and more
+- `context7-mcp-cli <operation> ...` is equivalent to `uxc mcp.context7.com/mcp <operation> ...`.
+- If link setup is temporarily unavailable, use direct `uxc mcp.context7.com/mcp ...` calls as fallback.
 
 ## Reference Files
 
