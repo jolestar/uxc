@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uxc auth binding match:*)",
+      "Bash(uxc auth oauth:*)",
+      "Bash(uxc auth info:*)",
+      "Bash(uxc:*)"
+    ]
+  }
+}
