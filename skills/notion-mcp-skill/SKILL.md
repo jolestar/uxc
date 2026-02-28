@@ -19,6 +19,10 @@ Do not assume another skill is auto-triggered in every runtime. Keep this skill 
 
 ## Core Workflow (Notion-Specific)
 
+Endpoint argument style in this skill:
+- Prefer shorthand `mcp.notion.com/mcp` (scheme omitted).
+- Full URL `https://mcp.notion.com/mcp` is also valid.
+
 1. Ensure endpoint mapping exists:
    - `uxc auth binding match mcp.notion.com/mcp`
 2. If mapping/auth is not ready, start OAuth login:
@@ -30,11 +34,11 @@ Do not assume another skill is auto-triggered in every runtime. Keep this skill 
 4. Use fixed link command by default:
    - `command -v notion-mcp-cli`
    - If missing, create it: `uxc link notion-mcp-cli mcp.notion.com/mcp`
-   - `notion-mcp-cli list`
+   - `notion-mcp-cli -h`
    - If command conflict is detected and cannot be safely reused, stop and ask skill maintainers to pick a different fixed command name.
 5. Discover tools and inspect schema before execution:
-   - `notion-mcp-cli list`
-   - `notion-mcp-cli describe notion-fetch`
+   - `notion-mcp-cli -h`
+   - `notion-mcp-cli notion-fetch -h`
    - `notion-fetch` requires `id` (URL or UUID). Examples:
      - `notion-mcp-cli notion-fetch id="https://notion.so/your-page-url"`
      - `notion-mcp-cli notion-fetch id="12345678-90ab-cdef-1234-567890abcdef"`

@@ -10,6 +10,7 @@ For canonical OAuth and binding workflow, use `uxc` skill:
 ## Notion Endpoint Defaults
 
 - endpoint: `mcp.notion.com/mcp`
+- endpoint input accepts both `mcp.notion.com/mcp` and `https://mcp.notion.com/mcp`
 - suggested scopes: `read`, `write`
 - callback example: `http://127.0.0.1:8788/callback`
 
@@ -72,7 +73,7 @@ If a conflicting command name exists and cannot be safely reused, stop and ask s
 Then run operation discovery/calls:
 
 ```bash
-uxc mcp.notion.com/mcp list
-notion-mcp-cli list
-notion-mcp-cli describe notion-fetch
+uxc mcp.notion.com/mcp -h
+notion-mcp-cli -h
+notion-mcp-cli notion-fetch -h
 ```
