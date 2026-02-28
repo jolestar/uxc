@@ -51,26 +51,26 @@ uxc mcp.deepwiki.com/mcp describe ask_question
 
 ## 3. Execute Operations
 
-### Preferred: JSON object via `--input-json`
+### Preferred (simple): key/value arguments
 
 ```bash
-uxc <host> <operation_id> --input-json '{"key":"value"}'
+uxc <host> <operation_id> key=value
 ```
 
-### Alternative: positional JSON object
+### Preferred (structured): positional JSON object
 
 ```bash
 uxc <host> <operation_id> '{"key":"value"}'
 ```
 
-### Alternative: key/value arguments
+### Fallback: explicit JSON flag
 
 ```bash
-uxc <host> <operation_id> --args key=value
-uxc <host> <operation_id> key=value
+uxc <host> <operation_id> --input-json '{"key":"value"}'
 ```
 
 Do not pass positional JSON and `--input-json` together.
+Do not pass raw JSON through `--args`.
 
 ## 4. Handle Keyword Conflicts
 
@@ -78,7 +78,8 @@ If an operation ID conflicts with a CLI keyword (for example `help` or `list`),
 use explicit `call` form:
 
 ```bash
-uxc <host> call <operation_id> --input-json '{...}'
+uxc <host> call <operation_id> key=value
+uxc <host> call <operation_id> '{...}'
 ```
 
 ## 5. Protocol Recipes
@@ -88,7 +89,7 @@ uxc <host> call <operation_id> --input-json '{...}'
 ```bash
 uxc petstore3.swagger.io/api/v3 list
 uxc petstore3.swagger.io/api/v3 describe get:/pet/{petId}
-uxc petstore3.swagger.io/api/v3 get:/pet/{petId} --input-json '{"petId":1}'
+uxc petstore3.swagger.io/api/v3 get:/pet/{petId} petId=1
 ```
 
 Schema-separated service (runtime endpoint differs from schema URL):
@@ -104,28 +105,28 @@ See [`docs/schema-mapping.md`](schema-mapping.md) for mapping-based defaults.
 
 ```bash
 uxc grpcb.in:9000 list
-uxc grpcb.in:9000 addsvc.Add/Sum --input-json '{"a":1,"b":2}'
+uxc grpcb.in:9000 addsvc.Add/Sum a=1 b=2
 ```
 
 ## GraphQL
 
 ```bash
 uxc countries.trevorblades.com list
-uxc countries.trevorblades.com query/country --input-json '{"code":"US"}'
+uxc countries.trevorblades.com query/country code=US
 ```
 
 ## MCP HTTP
 
 ```bash
 uxc mcp.deepwiki.com/mcp list
-uxc mcp.deepwiki.com/mcp ask_question --input-json '{"repoName":"holon-run/uxc","question":"What does this project do?"}'
+uxc mcp.deepwiki.com/mcp ask_question '{"repoName":"holon-run/uxc","question":"What does this project do?"}'
 ```
 
 ## MCP stdio
 
 ```bash
 uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list
-uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list_directory --input-json '{"path":"/tmp"}'
+uxc "npx -y @modelcontextprotocol/server-filesystem /tmp" list_directory path=/tmp
 ```
 
 ## JSON-RPC
@@ -145,7 +146,8 @@ By default, UXC prints machine-friendly JSON envelopes.
 ```bash
 uxc <host> list
 uxc <host> describe <operation_id>
-uxc <host> <operation_id> --input-json '{...}'
+uxc <host> <operation_id> key=value
+uxc <host> <operation_id> '{...}'
 ```
 
 Switch to CLI-readable text output when needed:

@@ -7,8 +7,8 @@ description: Operate Notion workspace content through Notion MCP using the UXC C
 
 Use this skill to run Notion MCP operations through `uxc` with OAuth and guarded write behavior.
 
-Always use the `uxc` skill (trigger: `$uxc`) as the execution layer for discovery, schema inspection, and tool calls.
-For OAuth lifecycle and error recovery, follow `$uxc` skill guidance (OAuth and Binding + Error Handling sections).
+Use the `uxc` skill guidance for discovery, schema inspection, OAuth lifecycle, and error recovery.
+Do not assume `$uxc` will be auto-triggered in every runtime. Keep this skill executable on its own.
 
 ## Prerequisites
 
@@ -32,6 +32,9 @@ For OAuth lifecycle and error recovery, follow `$uxc` skill guidance (OAuth and 
 5. Discover tools and inspect schema before execution:
    - `uxc https://mcp.notion.com/mcp list`
    - `uxc https://mcp.notion.com/mcp describe notion-fetch`
+   - `notion-fetch` requires `id` (URL or UUID). Examples:
+     - `uxc https://mcp.notion.com/mcp notion-fetch id="https://notion.so/your-page-url"`
+     - `uxc https://mcp.notion.com/mcp notion-fetch id="12345678-90ab-cdef-1234-567890abcdef"`
    - Common operations include `notion-search`, `notion-fetch`, and `notion-update-page`.
 6. Prefer read path first:
    - Search/fetch current state before any write.
