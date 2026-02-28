@@ -7,9 +7,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.83%2B-orange.svg)](https://www.rust-lang.org)
 
-UXC is a schema-driven, multi-protocol RPC execution runtime.
+UXC is a universal API calling CLI that lets you discover and invoke OpenAPI, gRPC, GraphQL,
+MCP, and JSON-RPC interfaces directly from a URL.
 
-It turns remote schema-exposed interfaces into executable command-line capabilities without SDKs,
+It turns remote schema-exposed interfaces into executable command-line operations without SDKs,
 code generation, or endpoint pre-registration.
 
 ## What Is UXC
@@ -36,7 +37,15 @@ Traditional workflows create repeated overhead:
 - one-off wrappers for each endpoint
 - large embedded tool schemas in agent prompts
 
-UXC provides one execution layer across protocols with URL-first invocation.
+UXC provides one URL-first CLI contract across protocols.
+
+## Why UXC Works Well With Skills
+
+UXC is a practical fit for skill-based agents:
+
+- On-demand discovery and invocation, without preloading large MCP tool definitions into prompt context
+- Portable by endpoint URL and auth binding, not tied to per-user local MCP server names
+- Reusable as one shared calling interface across many skills
 
 ## Core Capabilities
 
