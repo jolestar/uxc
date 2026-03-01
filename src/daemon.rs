@@ -4,6 +4,7 @@ use crate::adapters::{
 };
 use crate::auth::{self, Profile};
 use crate::cache::{self, Cache, CacheConfig};
+use crate::daemon_log::{DaemonEventType, DaemonLogEntry, DaemonLogger};
 use crate::error::UxcError;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -97,6 +98,8 @@ pub struct DaemonStatus {
     pub mcp_stdio_sessions: usize,
     pub mcp_http_sessions: usize,
     pub mcp_reuse_hits: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_file: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -286,10 +289,12 @@ pub struct DaemonRuntime {
     mcp: McpSessionManager,
     should_stop: Arc<RwLock<bool>>,
     schema_mapping_lock: Arc<Mutex<()>>,
+    logger: Option<DaemonLogger>,
 }
 
 impl DaemonRuntime {
     pub fn new() -> Self {
+        let logger = Self::initialize_logger();
         Self {
             state: Arc::new(Mutex::new(ServerState {
                 started_at_unix: now_unix_secs(),
@@ -298,6 +303,20 @@ impl DaemonRuntime {
             mcp: McpSessionManager::new(),
             should_stop: Arc::new(RwLock::new(false)),
             schema_mapping_lock: Arc::new(Mutex::new(())),
+            logger,
+        }
+    }
+
+    fn initialize_logger() -> Option<DaemonLogger> {
+        let dir = daemon_dir();
+        DaemonLogger::new(&dir).ok()
+    }
+
+    async fn log(&self, entry: DaemonLogEntry) {
+        if let Some(ref logger) = self.logger {
+            if let Err(e) = logger.log(&entry).await {
+                tracing::debug!("Failed to write daemon log: {}", e);
+            }
         }
     }
 
@@ -325,6 +344,16 @@ impl DaemonRuntime {
         }
 
         let start = Instant::now();
+
+        // Log runtime invoke start
+        self.log(
+            DaemonLogEntry::new(DaemonEventType::RuntimeInvokeStart)
+                .with_request_id(request.request_id.clone())
+                .with_endpoint(request.endpoint.clone())
+                .with_operation_id(request.operation_id.clone().unwrap_or_default()),
+        )
+        .await;
+
         let cache = self.build_cache(&request.options)?;
         let auth_profile =
             auth::resolve_auth_for_endpoint(&request.endpoint, request.options.auth.clone())?;
@@ -342,7 +371,29 @@ impl DaemonRuntime {
             request.options.no_cache,
             request.options.refresh_schema,
         )
-        .await?;
+        .await;
+
+        let resolved = match resolved {
+            Ok(r) => r,
+            Err(e) => {
+                // Log protocol detection failure
+                if let Some(uxc_err) = e.downcast_ref::<UxcError>() {
+                    if matches!(
+                        uxc_err,
+                        UxcError::ProtocolDetectionFailed(_) | UxcError::UnsupportedProtocol(_)
+                    ) {
+                        self.log(
+                            DaemonLogEntry::new(DaemonEventType::ProtocolDetectionFailure)
+                                .with_request_id(request.request_id.clone())
+                                .with_endpoint(request.endpoint.clone())
+                                .with_error(e.to_string()),
+                        )
+                        .await;
+                    }
+                }
+                return Err(e);
+            }
+        };
 
         let protocol = resolved.adapter.protocol_type().as_str().to_string();
         let mut meta = RuntimeMeta::default();
@@ -352,39 +403,99 @@ impl DaemonRuntime {
             meta.cache_age_ms = Some(cache_meta.age_ms);
             meta.cache_stale = Some(cache_meta.stale);
             meta.cache_fallback = Some(cache_meta.fallback);
+
+            // Log cache events
+            if cache_meta.fallback {
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::CacheFallback)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone())
+                        .with_protocol(protocol.clone()),
+                )
+                .await;
+            } else if cache_meta.stale {
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::CacheStale)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone())
+                        .with_protocol(protocol.clone()),
+                )
+                .await;
+            } else {
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::CacheHit)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone())
+                        .with_protocol(protocol.clone()),
+                )
+                .await;
+            }
         } else if matches!(protocol.as_str(), "jsonrpc" | "grpc" | "mcp") {
             meta.schema_involved = Some(true);
         }
 
-        if protocol == "mcp" {
+        let result: Result<(String, Option<String>, Value)> = if protocol == "mcp" {
             let (kind, operation, data, reused) = self.invoke_mcp(&request, auth_profile).await?;
             meta.daemon_session_reused = Some(reused);
-            return Ok(RuntimeInvokeResponse {
-                protocol,
-                endpoint: request.endpoint,
-                kind,
-                operation,
-                data,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                meta,
-            });
-        }
 
-        let (kind, operation, data) = invoke_with_adapter(&resolved.adapter, &request).await?;
-        Ok(RuntimeInvokeResponse {
-            protocol,
-            endpoint: request.endpoint,
-            kind,
-            operation,
-            data,
-            duration_ms: Some(start.elapsed().as_millis() as u64),
-            meta,
-        })
+            if reused {
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::DaemonSessionReused)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone()),
+                )
+                .await;
+            }
+
+            Ok((kind, operation, data))
+        } else {
+            invoke_with_adapter(&resolved.adapter, &request).await
+        };
+
+        match result {
+            Ok((kind, operation, data)) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::RuntimeInvokeSuccess)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone())
+                        .with_operation_id(request.operation_id.clone().unwrap_or_default())
+                        .with_protocol(protocol.clone())
+                        .with_duration_ms(duration_ms),
+                )
+                .await;
+
+                Ok(RuntimeInvokeResponse {
+                    protocol,
+                    endpoint: request.endpoint,
+                    kind,
+                    operation,
+                    data,
+                    duration_ms: Some(duration_ms),
+                    meta,
+                })
+            }
+            Err(e) => {
+                self.log(
+                    DaemonLogEntry::new(DaemonEventType::RuntimeInvokeFailure)
+                        .with_request_id(request.request_id.clone())
+                        .with_endpoint(request.endpoint.clone())
+                        .with_operation_id(request.operation_id.clone().unwrap_or_default())
+                        .with_error(e.to_string()),
+                )
+                .await;
+                Err(e)
+            }
+        }
     }
 
     pub async fn status(&self) -> DaemonStatus {
         let state = self.state.lock().await;
         let (stdio_sessions, http_sessions, reuse_hits) = self.mcp.status_counts().await;
+        let log_file: Option<String> = self
+            .logger
+            .as_ref()
+            .map(|l: &DaemonLogger| l.log_file_path().display().to_string());
         DaemonStatus {
             running: true,
             pid: Some(std::process::id()),
@@ -394,6 +505,7 @@ impl DaemonRuntime {
             mcp_stdio_sessions: stdio_sessions,
             mcp_http_sessions: http_sessions,
             mcp_reuse_hits: reuse_hits,
+            log_file,
         }
     }
 
@@ -667,6 +779,11 @@ pub async fn run_daemon_server() -> Result<()> {
 
     let runtime = Arc::new(DaemonRuntime::new());
 
+    // Log daemon start
+    runtime
+        .log(DaemonLogEntry::new(DaemonEventType::DaemonStart))
+        .await;
+
     loop {
         let (stream, _) = listener.accept().await?;
         let runtime_for_conn = runtime.clone();
@@ -680,6 +797,11 @@ pub async fn run_daemon_server() -> Result<()> {
             break;
         }
     }
+
+    // Log daemon stop
+    runtime
+        .log(DaemonLogEntry::new(DaemonEventType::DaemonStop))
+        .await;
 
     let _ = fs::remove_file(&socket);
     Ok(())

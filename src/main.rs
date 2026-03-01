@@ -18,6 +18,7 @@ mod auth;
 mod cache;
 pub mod cli;
 mod daemon;
+mod daemon_log;
 mod error;
 mod http_client;
 mod output;
