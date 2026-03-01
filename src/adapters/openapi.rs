@@ -20,6 +20,7 @@ pub struct OpenAPIAdapter {
     auth_profile: Option<Profile>,
     discovered_schema_urls: Arc<RwLock<HashMap<String, String>>>,
     schema_url_override: Option<String>,
+    force_refresh_schema: bool,
 }
 
 impl OpenAPIAdapter {
@@ -44,6 +45,7 @@ impl OpenAPIAdapter {
             auth_profile: None,
             discovered_schema_urls: Arc::new(RwLock::new(HashMap::new())),
             schema_url_override: None,
+            force_refresh_schema: false,
         }
     }
 
@@ -59,6 +61,11 @@ impl OpenAPIAdapter {
 
     pub fn with_schema_url_override(mut self, schema_url: Option<String>) -> Self {
         self.schema_url_override = schema_url;
+        self
+    }
+
+    pub fn with_refresh_schema(mut self, refresh: bool) -> Self {
+        self.force_refresh_schema = refresh;
         self
     }
 
@@ -485,6 +492,26 @@ impl Adapter for OpenAPIAdapter {
     }
 
     async fn fetch_schema(&self, url: &str) -> Result<Value> {
+        let normalized_url = Self::normalized_url(url);
+
+        // Try endpoint-level cache first so protocol resolution can be cache-first.
+        if !self.force_refresh_schema {
+            if let Some(cache) = &self.cache {
+                match cache.get(&normalized_url)? {
+                    crate::cache::CacheResult::Hit(schema) => {
+                        if Self::is_openapi_document(&schema) {
+                            debug!("OpenAPI endpoint cache hit for: {}", normalized_url);
+                            return Ok(schema);
+                        }
+                    }
+                    crate::cache::CacheResult::Bypassed => {
+                        debug!("OpenAPI endpoint cache bypassed for: {}", normalized_url);
+                    }
+                    crate::cache::CacheResult::Miss => {}
+                }
+            }
+        }
+
         let schema_url = self
             .discover_schema_url(url)
             .await?
@@ -493,17 +520,19 @@ impl Adapter for OpenAPIAdapter {
         let cache_key = Self::schema_cache_key(url, &schema_url);
 
         // Try cache first if available
-        if let Some(cache) = &self.cache {
-            match cache.get(&cache_key)? {
-                crate::cache::CacheResult::Hit(schema) => {
-                    debug!("OpenAPI cache hit for: {}", cache_key);
-                    return Ok(schema);
-                }
-                crate::cache::CacheResult::Bypassed => {
-                    debug!("OpenAPI cache bypassed for: {}", cache_key);
-                }
-                crate::cache::CacheResult::Miss => {
-                    debug!("OpenAPI cache miss for: {}", cache_key);
+        if !self.force_refresh_schema {
+            if let Some(cache) = &self.cache {
+                match cache.get(&cache_key)? {
+                    crate::cache::CacheResult::Hit(schema) => {
+                        debug!("OpenAPI cache hit for: {}", cache_key);
+                        return Ok(schema);
+                    }
+                    crate::cache::CacheResult::Bypassed => {
+                        debug!("OpenAPI cache bypassed for: {}", cache_key);
+                    }
+                    crate::cache::CacheResult::Miss => {
+                        debug!("OpenAPI cache miss for: {}", cache_key);
+                    }
                 }
             }
         }
@@ -518,6 +547,9 @@ impl Adapter for OpenAPIAdapter {
                 debug!("Failed to cache OpenAPI schema: {}", e);
             } else {
                 info!("Cached OpenAPI schema for: {}", cache_key);
+            }
+            if let Err(e) = cache.put(&normalized_url, &schema) {
+                debug!("Failed to cache OpenAPI endpoint schema: {}", e);
             }
         }
 
