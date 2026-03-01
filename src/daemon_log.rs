@@ -17,7 +17,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::debug;
 
 const DEFAULT_MAX_LOG_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 const DEFAULT_LOG_BACKUPS: usize = 3;
@@ -171,20 +170,15 @@ impl DaemonLogger {
 
         // Ensure log directory exists
         if let Some(parent) = log_file.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create log directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create log directory")?;
         }
 
         // Perform initial rotation check if log exists
-        if log_file.exists() {
-            rotate_log_if_needed(&log_file, max_bytes, backups)?;
+        if should_rotate(&log_file, max_bytes)? {
+            rotate_log_if_needed(&log_file, backups)?;
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file)
-            .context("Failed to open log file")?;
+        let file = open_log_file(&log_file)?;
 
         Ok(Self {
             log_file,
@@ -196,26 +190,25 @@ impl DaemonLogger {
 
     /// Write a log entry
     pub async fn log(&self, entry: &DaemonLogEntry) -> Result<()> {
-        let line = serde_json::to_string(entry)
-            .context("Failed to serialize log entry")?;
+        let line = serde_json::to_string(entry).context("Failed to serialize log entry")?;
 
         let mut inner = self.inner.lock().await;
-        if let Some(file) = &mut inner.file {
-            writeln!(file, "{}", line)
-                .context("Failed to write log entry")?;
-            file.flush()
-                .context("Failed to flush log entry")?;
+        if inner.file.is_none() {
+            inner.file = Some(open_log_file(&self.log_file)?);
         }
 
-        // Check if rotation is needed (do this asynchronously)
-        let log_file = self.log_file.clone();
-        let max_bytes = self.max_bytes;
-        let backups = self.backups;
-        tokio::spawn(async move {
-            if let Err(e) = rotate_log_if_needed(&log_file, max_bytes, backups) {
-                debug!("Log rotation failed: {}", e);
-            }
-        });
+        if let Some(file) = &mut inner.file {
+            writeln!(file, "{}", line).context("Failed to write log entry")?;
+            file.flush().context("Failed to flush log entry")?;
+        }
+
+        // Keep write + rotate in one critical section to avoid races and stale fds.
+        // Close the active fd before rotate so Windows rename can succeed.
+        if should_rotate(&self.log_file, self.max_bytes)? {
+            inner.file.take();
+            rotate_log_if_needed(&self.log_file, self.backups)?;
+            inner.file = Some(open_log_file(&self.log_file)?);
+        }
 
         Ok(())
     }
@@ -231,36 +224,47 @@ impl DaemonLogger {
     }
 }
 
-/// Rotate log file if it exceeds maximum size
-fn rotate_log_if_needed(log_file: &Path, max_bytes: u64, backups: usize) -> Result<()> {
-    let metadata = std::fs::metadata(log_file);
-
-    if let Ok(meta) = metadata {
-        if meta.len() > max_bytes {
-            // Rotate existing backups
-            for i in (1..backups).rev() {
-                let old_backup = log_file.with_extension(format!("log.{}", i));
-                let new_backup = log_file.with_extension(format!("log.{}", i + 1));
-                if old_backup.exists() {
-                    std::fs::rename(&old_backup, &new_backup)
-                        .context("Failed to rotate backup log file")?;
-                }
-            }
-
-            // Move current log to .1
-            let backup1 = log_file.with_extension("log.1");
-            std::fs::rename(log_file, &backup1)
-                .context("Failed to rotate current log file")?;
-
-            // Remove oldest backup if it exists
-            let oldest_backup = log_file.with_extension(format!("log.{}", backups + 1));
-            if oldest_backup.exists() {
-                std::fs::remove_file(&oldest_backup)
-                    .context("Failed to remove oldest backup")?;
-            }
+/// Rotate log file
+fn rotate_log_if_needed(log_file: &Path, backups: usize) -> Result<()> {
+    // Rotate existing backups
+    for i in (1..backups).rev() {
+        let old_backup = log_file.with_extension(format!("log.{}", i));
+        let new_backup = log_file.with_extension(format!("log.{}", i + 1));
+        if old_backup.exists() {
+            rename_replace(&old_backup, &new_backup).context("Failed to rotate backup log file")?;
         }
     }
 
+    // Move current log to .1
+    if log_file.exists() {
+        let backup1 = log_file.with_extension("log.1");
+        rename_replace(log_file, &backup1).context("Failed to rotate current log file")?;
+    }
+
+    Ok(())
+}
+
+fn open_log_file(log_file: &Path) -> Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+        .context("Failed to open log file")
+}
+
+fn should_rotate(log_file: &Path, max_bytes: u64) -> Result<bool> {
+    if !log_file.exists() {
+        return Ok(false);
+    }
+    let meta = std::fs::metadata(log_file).context("Failed to read log file metadata")?;
+    Ok(meta.len() > max_bytes)
+}
+
+fn rename_replace(src: &Path, dst: &Path) -> Result<()> {
+    if dst.exists() {
+        std::fs::remove_file(dst).context("Failed to remove existing rotation destination")?;
+    }
+    std::fs::rename(src, dst).context("Failed to rename rotation file")?;
     Ok(())
 }
 
@@ -276,7 +280,9 @@ fn redact_endpoint(endpoint: &str) -> String {
     let redacted = api_key_re.replace_all(&redacted, "${1}***").to_string();
     let redacted = token_re.replace_all(&redacted, "${1}***").to_string();
     let redacted = bearer_re.replace_all(&redacted, "${1}***").to_string();
-    let redacted = basic_auth_re.replace_all(&redacted, "${1}***:***@").to_string();
+    let redacted = basic_auth_re
+        .replace_all(&redacted, "${1}***:***@")
+        .to_string();
 
     redacted
 }
@@ -317,20 +323,30 @@ fn redact_value(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
             let sensitive_keys = [
-                "api_key", "apikey", "api-key",
-                "token", "access_token", "accesstoken", "access-token",
-                "secret", "secret_key", "secretkey",
-                "password", "passwd",
-                "authorization", "auth",
+                "api_key",
+                "apikey",
+                "api-key",
+                "token",
+                "access_token",
+                "accesstoken",
+                "access-token",
+                "secret",
+                "secret_key",
+                "secretkey",
+                "password",
+                "passwd",
+                "authorization",
+                "auth",
                 "bearer",
-                "credential", "credentials",
-                "private_key", "privatekey",
+                "credential",
+                "credentials",
+                "private_key",
+                "privatekey",
             ];
 
             for (key, val) in map.iter_mut() {
                 let key_lower = key.to_lowercase();
-                let is_sensitive = sensitive_keys.iter()
-                    .any(|sk| key_lower.contains(sk));
+                let is_sensitive = sensitive_keys.iter().any(|sk| key_lower.contains(sk));
 
                 if is_sensitive {
                     *val = json!("***");
@@ -342,15 +358,9 @@ fn redact_value(value: serde_json::Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(
-                arr.into_iter()
-                    .map(redact_value)
-                    .collect()
-            )
+            serde_json::Value::Array(arr.into_iter().map(redact_value).collect())
         }
-        serde_json::Value::String(s) => {
-            serde_json::Value::String(redact_sensitive(&s))
-        }
+        serde_json::Value::String(s) => serde_json::Value::String(redact_sensitive(&s)),
         _ => value,
     }
 }
@@ -392,10 +402,14 @@ mod tests {
         );
 
         // Bearer tokens get redacted - both "Bearer" keyword and JWT pattern match
-        assert!(redact_sensitive("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
-            .contains("***"));
-        assert!(!redact_sensitive("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
-            .contains("eyJ"));
+        assert!(
+            redact_sensitive("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
+                .contains("***")
+        );
+        assert!(
+            !redact_sensitive("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
+                .contains("eyJ")
+        );
     }
 
     #[test]
