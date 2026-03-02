@@ -16,6 +16,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -578,7 +579,11 @@ impl DaemonRuntime {
     pub async fn request_stop(&self) {
         let mut stop = self.should_stop.write().await;
         *stop = true;
-        let _ = UnixStream::connect(socket_path()).await;
+        // Nudge the accept loop to exit promptly.
+        #[cfg(unix)]
+        {
+            let _ = UnixStream::connect(socket_path()).await;
+        }
     }
 
     pub async fn should_stop(&self) -> bool {
