@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-02
+
+### Added
+- `uxcd` runtime daemon with auto-start endpoint execution path and MCP session reuse (stdio + HTTP).
+- Daemon troubleshooting logs with basic rotation for easier local diagnostics.
+- Playwright MCP wrapper skill and validation script to exercise stdio-based MCP usage.
+- Expanded integration coverage for offline cache fallback, daemon reuse, and daemon logging.
+
+### Changed
+- Prefer schema cache-first resolution across protocols for help and execution paths to improve reliability.
+- Authentication model now supports a dual-track approach: local convenience storage plus external secret sources (for example `env`/`op`) for advanced users.
+
+### Fixed
+- Stabilize daemon reuse and status diagnostics.
+- Improve log rotation behavior to avoid CI/local flakiness.
+
 ## [0.4.2] - 2026-02-28
 
 ### Changed
@@ -154,7 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/holon-run/uxc/releases/tag/v0.5.0
 [0.4.2]: https://github.com/holon-run/uxc/releases/tag/v0.4.2
 [0.4.1]: https://github.com/holon-run/uxc/releases/tag/v0.4.1
 [0.4.0]: https://github.com/holon-run/uxc/releases/tag/v0.4.0
