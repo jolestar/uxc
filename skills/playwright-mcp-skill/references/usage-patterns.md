@@ -11,6 +11,25 @@ command -v playwright-mcp-cli
 uxc link playwright-mcp-cli "npx -y @playwright/mcp@latest --headless --isolated"
 ```
 
+## Shared Profile Dual CLI (Persistent Login State)
+
+Use this mode when you need to preserve login/session state across runs.
+
+```bash
+command -v playwright-mcp-headless
+command -v playwright-mcp-ui
+uxc link playwright-mcp-headless "npx -y @playwright/mcp@latest --headless --user-data-dir ~/.uxc/playwright-profile"
+uxc link playwright-mcp-ui "npx -y @playwright/mcp@latest --user-data-dir ~/.uxc/playwright-profile"
+```
+
+Do not run these two links concurrently with the same profile directory.
+Switch serially:
+
+```bash
+uxc daemon stop
+playwright-mcp-ui -h
+```
+
 ## Discover And Inspect
 
 ```bash

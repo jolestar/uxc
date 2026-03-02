@@ -55,6 +55,22 @@ if ! rg -q 'uxc link playwright-mcp-cli "npx -y @playwright/mcp@latest --headles
   fail "SKILL.md must include fixed link creation command"
 fi
 
+if ! rg -q 'playwright-mcp-headless' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
+  fail "docs must include optional shared-profile headless command"
+fi
+
+if ! rg -q 'playwright-mcp-ui' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
+  fail "docs must include optional shared-profile headed command"
+fi
+
+if ! rg -q -- '--user-data-dir' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
+  fail "docs must include shared profile guidance via --user-data-dir"
+fi
+
+if ! rg -q 'uxc daemon stop' "${SKILL_FILE}" "${SKILL_DIR}/references/usage-patterns.md"; then
+  fail "docs must include daemon stop guidance before switching shared-profile links"
+fi
+
 if ! rg -q 'playwright-mcp-cli -h' "${SKILL_FILE}"; then
   fail "SKILL.md must use playwright-mcp-cli help-first discovery"
 fi
