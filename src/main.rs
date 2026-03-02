@@ -987,7 +987,12 @@ async fn execute_endpoint_via_daemon(
 ) -> Result<OutputEnvelope> {
     info!("UXC v{} - connecting to {}", env!("CARGO_PKG_VERSION"), url);
 
-    let daemon_autostarted = daemon::ensure_daemon_running().await?;
+    let daemon_used = daemon::daemon_supported();
+    let daemon_autostarted = if daemon_used {
+        Some(daemon::ensure_daemon_running().await?)
+    } else {
+        None
+    };
     let (action, operation_id, args_map) = match endpoint_command {
         EndpointCommand::HostHelp => (daemon::RuntimeAction::HostHelp, None, None),
         EndpointCommand::Describe { operation_id } => (
@@ -1040,8 +1045,8 @@ async fn execute_endpoint_via_daemon(
         response.duration_ms,
     )
     .with_daemon_meta(
-        true,
-        Some(daemon_autostarted),
+        daemon_used,
+        daemon_autostarted,
         response.meta.daemon_session_reused,
     );
 

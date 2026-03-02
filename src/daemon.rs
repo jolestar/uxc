@@ -19,7 +19,9 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, RwLock};
 
@@ -40,6 +42,10 @@ const ERR_OAUTH_REQUIRED: i32 = -32012;
 const ERR_OAUTH_REFRESH_FAILED: i32 = -32013;
 const ERR_OAUTH_SCOPE_INSUFFICIENT: i32 = -32014;
 const ERR_RUNTIME_GENERIC: i32 = -32030;
+
+pub fn daemon_supported() -> bool {
+    cfg!(unix)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -774,16 +780,29 @@ impl DaemonRuntime {
     }
 }
 
+#[cfg(unix)]
 pub async fn daemon_status_client() -> Result<DaemonStatus> {
     let value = client_call("daemon.status", None).await?;
     Ok(serde_json::from_value(value)?)
 }
 
+#[cfg(not(unix))]
+pub async fn daemon_status_client() -> Result<DaemonStatus> {
+    bail!("uxcd daemon is not supported on this platform")
+}
+
+#[cfg(unix)]
 pub async fn daemon_stop_client() -> Result<()> {
     let _ = client_call("daemon.shutdown", None).await?;
     Ok(())
 }
 
+#[cfg(not(unix))]
+pub async fn daemon_stop_client() -> Result<()> {
+    bail!("uxcd daemon is not supported on this platform")
+}
+
+#[cfg(unix)]
 pub async fn runtime_invoke_client(
     request: &RuntimeInvokeRequest,
 ) -> Result<RuntimeInvokeResponse> {
@@ -792,6 +811,17 @@ pub async fn runtime_invoke_client(
     Ok(serde_json::from_value(value)?)
 }
 
+#[cfg(not(unix))]
+pub async fn runtime_invoke_client(
+    request: &RuntimeInvokeRequest,
+) -> Result<RuntimeInvokeResponse> {
+    // Non-Unix platforms don't have Unix domain sockets. Execute in-process instead of
+    // attempting to IPC to a daemon.
+    let runtime = DaemonRuntime::new();
+    runtime.invoke(request.clone()).await
+}
+
+#[cfg(unix)]
 pub async fn ensure_daemon_running() -> Result<bool> {
     if daemon_status_client().await.is_ok() {
         return Ok(false);
@@ -826,6 +856,12 @@ pub async fn ensure_daemon_running() -> Result<bool> {
     bail!("Daemon failed to start. Run `uxc daemon status` for diagnostics.")
 }
 
+#[cfg(not(unix))]
+pub async fn ensure_daemon_running() -> Result<bool> {
+    bail!("uxcd daemon is not supported on this platform")
+}
+
+#[cfg(unix)]
 pub async fn run_daemon_server() -> Result<()> {
     let dir = daemon_dir();
     ensure_private_dir(&dir)?;
@@ -867,6 +903,12 @@ pub async fn run_daemon_server() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(unix))]
+pub async fn run_daemon_server() -> Result<()> {
+    bail!("uxcd daemon is not supported on this platform")
+}
+
+#[cfg(unix)]
 async fn handle_connection(mut stream: UnixStream, runtime: Arc<DaemonRuntime>) -> Result<()> {
     let req_val = match read_frame(&mut stream).await {
         Ok(value) => value,
@@ -1016,6 +1058,7 @@ pub async fn daemon_stop_local() -> Result<bool> {
     bail!("Daemon did not stop in time. Run `uxc daemon status` for diagnostics.")
 }
 
+#[cfg(unix)]
 async fn client_call(method: &str, params: Option<Value>) -> Result<Value> {
     let mut stream = tokio::time::timeout(
         Duration::from_secs(CONNECT_TIMEOUT_SECS),
@@ -1065,6 +1108,7 @@ async fn client_call(method: &str, params: Option<Value>) -> Result<Value> {
         .ok_or_else(|| anyhow!("Missing JSON-RPC result"))
 }
 
+#[cfg(unix)]
 async fn write_frame(stream: &mut UnixStream, value: &Value) -> Result<()> {
     let body = serde_json::to_vec(value)?;
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
@@ -1086,6 +1130,7 @@ async fn write_frame(stream: &mut UnixStream, value: &Value) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 async fn read_frame(stream: &mut UnixStream) -> Result<Value> {
     let mut header = Vec::new();
     let mut byte = [0_u8; 1];
@@ -1750,6 +1795,7 @@ fn validate_mcp_tool_args(
     .into())
 }
 
+#[cfg(unix)]
 async fn write_jsonrpc_error(
     stream: &mut UnixStream,
     id: Value,
