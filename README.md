@@ -304,6 +304,9 @@ uxc auth credential set deepwiki --secret-op op://Engineering/deepwiki/token
 uxc auth binding add --id deepwiki-mcp --host mcp.deepwiki.com --path-prefix /mcp --scheme https --credential deepwiki --priority 100
 ```
 
+For `--secret-op`, secret resolution happens at request runtime through daemon execution.
+Ensure daemon has usable 1Password auth context (for example `OP_SERVICE_ACCOUNT_TOKEN`), and restart daemon after env changes.
+
 OAuth for MCP HTTP is supported (device code, client credentials, authorization code + PKCE).
 See [`docs/oauth-mcp-http.md`](docs/oauth-mcp-http.md) for full workflows.
 
@@ -313,6 +316,7 @@ See [`docs/oauth-mcp-http.md`](docs/oauth-mcp-http.md) for full workflows.
 - Public no-key endpoints for protocol checks: [`docs/public-endpoints.md`](docs/public-endpoints.md)
 - Logging and troubleshooting with `RUST_LOG`: [`docs/logging.md`](docs/logging.md)
 - Auth credential secret sources (`literal/env/op`): [`docs/auth-secret-sources.md`](docs/auth-secret-sources.md)
+- Run daemon with service managers (`systemd`/`launchd`): [`docs/daemon-service.md`](docs/daemon-service.md)
 - OpenAPI schema mapping and `--schema-url`: [`docs/schema-mapping.md`](docs/schema-mapping.md)
 - Skills overview and install/maintenance guidance: [`docs/skills.md`](docs/skills.md)
 - Release process: [`docs/release.md`](docs/release.md)

@@ -4,3 +4,4 @@ This directory contains reusable manual end-to-end (E2E) test cases.
 
 - [GitHub MCP OAuth Full Flow](./github-mcp-oauth/README.md)
 - [Notion MCP OAuth (Authorization Code + PKCE)](./notion-mcp-oauth/README.md)
+- [1Password Secret Source (`--secret-op`) Runtime Resolution](./1password-secret-op/README.md)
