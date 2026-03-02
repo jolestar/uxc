@@ -184,16 +184,23 @@ impl McpSessionManager {
     async fn cleanup_idle(&self) {
         let cutoff = Instant::now() - Duration::from_secs(MCP_IDLE_TTL_SECS);
 
-        {
-            let mut map = self.stdio.lock().await;
-            let mut remove = Vec::new();
-            for (k, s) in map.iter() {
-                let guard = s.lock().await;
+        let stdio_entries: Vec<(String, Arc<Mutex<McpStdioSession>>)> = {
+            let map = self.stdio.lock().await;
+            map.iter().map(|(k, s)| (k.clone(), s.clone())).collect()
+        };
+        let mut stdio_remove = Vec::new();
+        for (key, session) in &stdio_entries {
+            // Use try_lock to avoid blocking on sessions that may be held across .await in invoke_mcp.
+            // If a session is busy, we'll check it again in the next cleanup cycle.
+            if let Ok(guard) = session.try_lock() {
                 if guard.last_used < cutoff {
-                    remove.push(k.clone());
+                    stdio_remove.push(key.clone());
                 }
             }
-            for key in remove {
+        }
+        if !stdio_remove.is_empty() {
+            let mut map = self.stdio.lock().await;
+            for key in stdio_remove {
                 map.remove(&key);
             }
         }
@@ -208,16 +215,20 @@ impl McpSessionManager {
         // lock and spawn another MCP process, breaking the singleflight guarantee.
         lock_map.retain(|_, v| Arc::strong_count(&v.lock) > 1 || v.touched_at >= init_lock_cutoff);
 
-        {
-            let mut map = self.http.lock().await;
-            let mut remove = Vec::new();
-            for (k, s) in map.iter() {
-                let last = *s.last_used.lock().await;
-                if last < cutoff {
-                    remove.push(k.clone());
-                }
+        let http_entries: Vec<(String, Arc<McpHttpSession>)> = {
+            let map = self.http.lock().await;
+            map.iter().map(|(k, s)| (k.clone(), s.clone())).collect()
+        };
+        let mut http_remove = Vec::new();
+        for (key, session) in &http_entries {
+            let last = *session.last_used.lock().await;
+            if last < cutoff {
+                http_remove.push(key.clone());
             }
-            for key in remove {
+        }
+        if !http_remove.is_empty() {
+            let mut map = self.http.lock().await;
+            for key in http_remove {
                 map.remove(&key);
             }
         }

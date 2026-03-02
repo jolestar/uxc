@@ -6,9 +6,12 @@ use async_trait::async_trait;
 use serde_json::Value as JsonValue;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
+
+const DEFAULT_STDIO_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
 /// Trait for executing MCP stdio processes (abstracted for testing)
 #[async_trait]
@@ -336,8 +339,22 @@ impl McpStdioTransport {
             return Err(anyhow!("Request channel closed"));
         }
 
-        // Wait for the response
-        let response = response_rx.await.context("Response channel closed")?;
+        // Wait for the response with timeout so a stuck MCP server/tool call
+        // does not block the caller indefinitely.
+        let timeout = stdio_request_timeout();
+        let response = match tokio::time::timeout(timeout, response_rx).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => return Err(anyhow!("Response channel closed")),
+            Err(_) => {
+                let mut channels = self.response_channels.lock().await;
+                channels.remove(&id);
+                return Err(anyhow!(
+                    "MCP stdio request timed out after {}ms: {}",
+                    timeout.as_millis(),
+                    method
+                ));
+            }
+        };
 
         if let Some(error) = response.error {
             bail!("JSON-RPC error: {} - {}", error.code, error.message);
@@ -394,6 +411,15 @@ impl McpStdioTransport {
     }
 }
 
+fn stdio_request_timeout() -> Duration {
+    let ms = std::env::var("UXC_MCP_STDIO_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_STDIO_REQUEST_TIMEOUT_MS);
+    Duration::from_millis(ms)
+}
+
 /// Parse a command string into parts (handles quoted strings)
 pub fn parse_command(cmd: &str) -> Vec<String> {
     let mut parts = Vec::new();
@@ -426,14 +452,14 @@ pub fn parse_command(cmd: &str) -> Vec<String> {
     parts
 }
 
-/// Find a complete JSON object in the string
-/// Returns the length of the JSON object if found
+/// Find a complete JSON object in the string.
+/// Returns the byte length of the JSON object if found.
 fn find_complete_json(s: &str) -> Option<usize> {
     let mut brace_count = 0;
     let mut in_string = false;
     let mut escape_next = false;
 
-    for (i, ch) in s.chars().enumerate() {
+    for (i, ch) in s.char_indices() {
         if escape_next {
             escape_next = false;
             continue;
@@ -455,7 +481,7 @@ fn find_complete_json(s: &str) -> Option<usize> {
             } else if ch == '}' {
                 brace_count -= 1;
                 if brace_count == 0 {
-                    return Some(i + 1);
+                    return Some(i + ch.len_utf8());
                 }
             }
         }
@@ -614,6 +640,37 @@ mod tests {
 
         let response = transport.send_request("ping", None).await.unwrap();
         assert_eq!(response["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn send_request_handles_large_utf8_json_payload() {
+        let text = "百度一下，你就知道 历史记录";
+        let large_text = text.repeat(2048);
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": large_text
+                    }
+                ]
+            }
+        });
+        let script = format!("read line; cat <<'EOF'\n{}\nEOF", response);
+        let mut transport =
+            McpStdioTransport::connect("sh", &["-c".to_string(), script.to_string()])
+                .await
+                .unwrap();
+
+        let result = transport.send_request("tools/call", None).await.unwrap();
+        let got = result["content"][0]["text"]
+            .as_str()
+            .expect("text content should be string");
+        assert!(got.starts_with("百度一下"));
+        assert!(got.contains("历史记录"));
+        assert!(got.len() > 10_000);
     }
 
     #[tokio::test]
@@ -786,6 +843,15 @@ mod tests {
         let json = r#"{"key":
 "value"}"#;
         assert_eq!(find_complete_json(json), Some(json.len()));
+    }
+
+    #[tokio::test]
+    async fn find_complete_json_returns_byte_boundary_for_utf8_content() {
+        let json =
+            r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"百度 历史"}]}}"#;
+        let pos = find_complete_json(json).expect("should find complete json");
+        assert_eq!(pos, json.len());
+        assert!(serde_json::from_str::<JsonValue>(&json[..pos]).is_ok());
     }
 
     #[tokio::test]
