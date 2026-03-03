@@ -9,25 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.3] - 2026-03-02
 
-### Fixed
-- Fix Windows release builds by fully gating Unix domain socket usage behind `cfg(unix)`.
-
-### Documentation
-- Update Playwright MCP skill guidance for shared profile usage.
-
-## [0.5.2] - 2026-03-02
-
-### Fixed
-- Fix Windows builds by gating Unix domain socket daemon IPC behind `cfg(unix)`.
-
-## [0.5.1] - 2026-03-02
-
-### Fixed
-- Improve daemon idle cleanup to avoid global lock stalls under load.
-- Add MCP stdio request timeout to prevent indefinite hangs.
-- Stabilize MCP stdio framing/transport behavior for large payloads.
-
-## [0.5.0] - 2026-03-02
+> Note: `v0.5.0`, `v0.5.1`, and `v0.5.2` were intermediate tags that were not released.
+> `v0.5.3` is the first published `0.5.x` release and includes all changes listed below.
 
 ### Added
 - `uxcd` runtime daemon with auto-start endpoint execution path and MCP session reuse (stdio + HTTP).
@@ -40,8 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authentication model now supports a dual-track approach: local convenience storage plus external secret sources (for example `env`/`op`) for advanced users.
 
 ### Fixed
-- Stabilize daemon reuse and status diagnostics.
-- Improve log rotation behavior to avoid CI/local flakiness.
+- Improve daemon idle cleanup to avoid global lock stalls under load.
+- Add MCP stdio request timeout to prevent indefinite hangs.
+- Stabilize MCP stdio framing/transport behavior for large payloads.
+- Fix Windows release builds by fully gating Unix domain socket usage behind `cfg(unix)`.
+
+### Documentation
+- Update Playwright MCP skill guidance for shared profile usage.
 
 ## [0.4.2] - 2026-02-28
 
@@ -192,9 +180,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/holon-run/uxc/compare/v0.5.3...HEAD
 [0.5.3]: https://github.com/holon-run/uxc/releases/tag/v0.5.3
-[0.5.2]: https://github.com/holon-run/uxc/releases/tag/v0.5.2
-[0.5.1]: https://github.com/holon-run/uxc/releases/tag/v0.5.1
-[0.5.0]: https://github.com/holon-run/uxc/releases/tag/v0.5.0
 [0.4.2]: https://github.com/holon-run/uxc/releases/tag/v0.4.2
 [0.4.1]: https://github.com/holon-run/uxc/releases/tag/v0.4.1
 [0.4.0]: https://github.com/holon-run/uxc/releases/tag/v0.4.0
