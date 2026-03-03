@@ -259,8 +259,8 @@ Use `uxc` skill as the shared execution layer, and add wrappers when they fit yo
 | Skill | Purpose | Path |
 | --- | --- | --- |
 | `uxc` | Canonical schema discovery and multi-protocol execution layer | [`skills/uxc/SKILL.md`](skills/uxc/SKILL.md) |
-| `deepwiki` | Query repository documentation and ask codebase questions | [`skills/deepwiki/SKILL.md`](skills/deepwiki/SKILL.md) |
-| `context7` | Query up-to-date library documentation/examples over MCP | [`skills/context7/SKILL.md`](skills/context7/SKILL.md) |
+| `deepwiki-mcp-skill` | Query repository documentation and ask codebase questions | [`skills/deepwiki-mcp-skill/SKILL.md`](skills/deepwiki-mcp-skill/SKILL.md) |
+| `context7-mcp-skill` | Query up-to-date library documentation/examples over MCP | [`skills/context7-mcp-skill/SKILL.md`](skills/context7-mcp-skill/SKILL.md) |
 | `notion-mcp-skill` | Operate Notion MCP workflows with OAuth-aware guidance | [`skills/notion-mcp-skill/SKILL.md`](skills/notion-mcp-skill/SKILL.md) |
 | `playwright-mcp-skill` | Run `@playwright/mcp` over MCP stdio through `uxc` (browser automation) | [`skills/playwright-mcp-skill/SKILL.md`](skills/playwright-mcp-skill/SKILL.md) |
 

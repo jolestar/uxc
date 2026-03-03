@@ -1,5 +1,5 @@
 ---
-name: deepwiki
+name: deepwiki-mcp-skill
 description: Ask questions and read documentation about any GitHub repository using DeepWiki MCP. Use when you need to understand a codebase, find specific APIs, or get context about a repository.
 metadata:
   short-description: Query GitHub repo docs via DeepWiki

@@ -1,5 +1,5 @@
 ---
-name: context7
+name: context7-mcp-skill
 description: Query up-to-date library documentation and code examples using Context7 MCP. Use when you need current, version-specific documentation for npm packages, Python libraries, or other programming languages.
 metadata:
   short-description: Query library docs via Context7 MCP
