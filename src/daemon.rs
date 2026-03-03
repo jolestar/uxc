@@ -1,6 +1,5 @@
 use crate::adapters::{
-    self, Adapter, AdapterEnum, DetectionOptions, Operation, OperationDetail, ProtocolDetector,
-    ProtocolType,
+    self, Adapter, AdapterEnum, DetectionOptions, Operation, ProtocolDetector, ProtocolType,
 };
 use crate::auth::{self, Profile};
 use crate::cache::{self, Cache, CacheConfig};
@@ -170,12 +169,12 @@ struct InitLockEntry {
 struct McpStdioSession {
     client: adapters::mcp::McpStdioClient,
     last_used: Instant,
+    user_data_dir: Option<String>,
 }
 
 struct McpHttpSession {
     transport: adapters::mcp::McpHttpTransport,
     last_used: Arc<Mutex<Instant>>,
-    init_result: adapters::mcp::types::InitializeResult,
 }
 
 impl McpSessionManager {
@@ -199,8 +198,9 @@ impl McpSessionManager {
         for (key, session) in &stdio_entries {
             // Use try_lock to avoid blocking on sessions that may be held across .await in invoke_mcp.
             // If a session is busy, we'll check it again in the next cleanup cycle.
-            if let Ok(guard) = session.try_lock() {
+            if let Ok(mut guard) = session.try_lock() {
                 if guard.last_used < cutoff {
+                    guard.client.start_kill();
                     stdio_remove.push(key.clone());
                 }
             }
@@ -255,6 +255,14 @@ impl McpSessionManager {
             }
         }
 
+        // If this endpoint uses a persistent browser profile, we must avoid keeping a stale
+        // session alive that still holds a lock on the same profile dir. This shows up in the
+        // "headed login first, then headless automation" workflow.
+        if let Some(user_data_dir) = extract_user_data_dir(args) {
+            self.evict_stdio_user_data_dir_conflicts(key, &user_data_dir)
+                .await?;
+        }
+
         // Singleflight for stdio process initialization by endpoint key.
         // This avoids duplicate process spawns under concurrent cold requests.
         let key_lock = {
@@ -282,11 +290,59 @@ impl McpSessionManager {
         let session = Arc::new(Mutex::new(McpStdioSession {
             client,
             last_used: Instant::now(),
+            user_data_dir: extract_user_data_dir(args),
         }));
 
         let mut map = self.stdio.lock().await;
         map.insert(key.to_string(), session.clone());
         Ok((session, false))
+    }
+
+    async fn evict_stdio_user_data_dir_conflicts(
+        &self,
+        keep_key: &str,
+        user_data_dir: &str,
+    ) -> Result<()> {
+        let candidates: Vec<(String, Arc<Mutex<McpStdioSession>>)> = {
+            let map = self.stdio.lock().await;
+            map.iter()
+                .filter(|(k, _)| k.as_str() != keep_key)
+                .map(|(k, s)| (k.clone(), s.clone()))
+                .collect()
+        };
+
+        let mut to_remove = Vec::new();
+        for (key, session) in candidates {
+            // Prefer fast non-blocking checks. If a session is busy and appears to use the same
+            // profile dir, we fail fast with a clear message.
+            if let Ok(mut guard) = session.try_lock() {
+                if guard
+                    .user_data_dir
+                    .as_deref()
+                    .is_some_and(|d| d == user_data_dir)
+                {
+                    guard.client.start_kill();
+                    to_remove.push(key);
+                }
+            } else if extract_user_data_dir_from_stdio_cache_key(&key)
+                .as_deref()
+                .is_some_and(|d| d == user_data_dir)
+            {
+                bail!(
+                    "Another MCP stdio session is currently using --user-data-dir {}. Close it (or run `uxc daemon stop`) before switching.",
+                    user_data_dir
+                );
+            }
+        }
+
+        if to_remove.is_empty() {
+            return Ok(());
+        }
+        let mut map = self.stdio.lock().await;
+        for key in to_remove {
+            map.remove(&key);
+        }
+        Ok(())
     }
 
     async fn get_or_create_http(
@@ -306,11 +362,10 @@ impl McpSessionManager {
 
         let transport =
             adapters::mcp::McpHttpTransport::with_auth(endpoint.to_string(), auth_profile)?;
-        let init_result = transport.initialize().await?;
+        transport.initialize().await?;
         let session = Arc::new(McpHttpSession {
             transport,
             last_used: Arc::new(Mutex::new(Instant::now())),
-            init_result,
         });
 
         let mut map = self.http.lock().await;
@@ -501,23 +556,26 @@ impl DaemonRuntime {
             meta.schema_involved = Some(true);
         }
 
-        let result: Result<(String, Option<String>, Value)> = if protocol == "mcp" {
-            let (kind, operation, data, reused) = self.invoke_mcp(&request, auth_profile).await?;
-            meta.daemon_session_reused = Some(reused);
+        let result: Result<(String, Option<String>, Value)> =
+            if protocol == "mcp" && matches!(request.action, RuntimeAction::Execute) {
+                validate_execute_preflight(&resolved.adapter, &request).await?;
+                let (kind, operation, data, reused) =
+                    self.invoke_mcp_execute(&request, auth_profile).await?;
+                meta.daemon_session_reused = Some(reused);
 
-            if reused {
-                self.log(
-                    DaemonLogEntry::new(DaemonEventType::DaemonSessionReused)
-                        .with_request_id(request.request_id.clone())
-                        .with_endpoint(request.endpoint.clone()),
-                )
-                .await;
-            }
+                if reused {
+                    self.log(
+                        DaemonLogEntry::new(DaemonEventType::DaemonSessionReused)
+                            .with_request_id(request.request_id.clone())
+                            .with_endpoint(request.endpoint.clone()),
+                    )
+                    .await;
+                }
 
-            Ok((kind, operation, data))
-        } else {
-            invoke_with_adapter(&resolved.adapter, &request).await
-        };
+                Ok((kind, operation, data))
+            } else {
+                invoke_with_adapter(&resolved.adapter, &request).await
+            };
 
         match result {
             Ok((kind, operation, data)) => {
@@ -607,12 +665,23 @@ impl DaemonRuntime {
         cache::create_cache(cfg)
     }
 
-    async fn invoke_mcp(
+    async fn invoke_mcp_execute(
         &self,
         request: &RuntimeInvokeRequest,
         auth_profile: Option<Profile>,
     ) -> Result<(String, Option<String>, Value, bool)> {
         let endpoint = &request.endpoint;
+        let op = request
+            .operation_id
+            .as_ref()
+            .ok_or_else(|| anyhow!("operation_id is required"))?;
+        let args = request.args.clone().unwrap_or_default();
+        let arguments = if args.is_empty() {
+            None
+        } else {
+            Some(Value::Object(args.into_iter().collect()))
+        };
+
         if adapters::mcp::McpAdapter::is_stdio_command(endpoint) {
             let (cmd, cmd_args) = adapters::mcp::McpAdapter::parse_stdio_command(endpoint)?;
             let key = format!(
@@ -623,76 +692,13 @@ impl DaemonRuntime {
             let (session, reused) = self.mcp.get_or_create_stdio(&key, &cmd, &cmd_args).await?;
             let mut guard = session.lock().await;
             guard.last_used = Instant::now();
-            match request.action {
-                RuntimeAction::HostHelp => {
-                    let operations = guard
-                        .client
-                        .list_tools()
-                        .await?
-                        .into_iter()
-                        .map(tool_to_operation)
-                        .collect::<Vec<_>>();
-                    let protocol = "mcp";
-                    let summaries = operations
-                        .iter()
-                        .map(|op| to_operation_summary(protocol, op))
-                        .collect::<Vec<_>>();
-                    let service = Some(ServiceSummary {
-                        name: guard.client.server_info().map(|i| i.name.clone()),
-                        description: guard.client.instructions().map(ToString::to_string),
-                    });
-                    Ok((
-                        "host_help".to_string(),
-                        None,
-                        serde_json::to_value(json!({
-                            "operations": summaries,
-                            "count": summaries.len(),
-                            "examples": host_help_examples(request.options.link_name.as_deref()),
-                            "service": service
-                        }))?,
-                        reused,
-                    ))
-                }
-                RuntimeAction::OperationHelp => {
-                    let op = request
-                        .operation_id
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("operation_id is required"))?;
-                    let tools = guard.client.list_tools().await?;
-                    let tool = tools
-                        .into_iter()
-                        .find(|t| t.name == *op)
-                        .ok_or_else(|| UxcError::OperationNotFound(op.clone()))?;
-                    let detail = tool_to_operation_detail(tool);
-                    Ok((
-                        "operation_detail".to_string(),
-                        Some(op.clone()),
-                        serde_json::to_value(detail)?,
-                        reused,
-                    ))
-                }
-                RuntimeAction::Execute => {
-                    let op = request
-                        .operation_id
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("operation_id is required"))?;
-                    let args = request.args.clone().unwrap_or_default();
-                    let tools = guard.client.list_tools().await?;
-                    validate_mcp_tool_args(op, &tools, &args)?;
-                    let arguments = if args.is_empty() {
-                        None
-                    } else {
-                        Some(Value::Object(args.into_iter().collect()))
-                    };
-                    let result = guard.client.call_tool(op, arguments).await?;
-                    Ok((
-                        "call_result".to_string(),
-                        Some(op.clone()),
-                        convert_tool_content_to_value(&result.content),
-                        reused,
-                    ))
-                }
-            }
+            let result = guard.client.call_tool(op, arguments).await?;
+            Ok((
+                "call_result".to_string(),
+                Some(op.clone()),
+                convert_tool_content_to_value(&result.content),
+                reused,
+            ))
         } else {
             let resolved_endpoint =
                 resolve_mcp_http_endpoint(endpoint, auth_profile.clone()).await?;
@@ -706,81 +712,13 @@ impl DaemonRuntime {
                 .get_or_create_http(&key, &resolved_endpoint, auth_profile)
                 .await?;
             *session.last_used.lock().await = Instant::now();
-
-            match request.action {
-                RuntimeAction::HostHelp => {
-                    let operations = session
-                        .transport
-                        .list_tools()
-                        .await?
-                        .into_iter()
-                        .map(tool_to_operation)
-                        .collect::<Vec<_>>();
-                    let protocol = "mcp";
-                    let summaries = operations
-                        .iter()
-                        .map(|op| to_operation_summary(protocol, op))
-                        .collect::<Vec<_>>();
-                    let service = Some(ServiceSummary {
-                        name: session
-                            .init_result
-                            .serverInfo
-                            .as_ref()
-                            .map(|i| i.name.clone()),
-                        description: session.init_result.instructions.clone(),
-                    });
-                    Ok((
-                        "host_help".to_string(),
-                        None,
-                        serde_json::to_value(json!({
-                            "operations": summaries,
-                            "count": summaries.len(),
-                            "examples": host_help_examples(request.options.link_name.as_deref()),
-                            "service": service
-                        }))?,
-                        reused,
-                    ))
-                }
-                RuntimeAction::OperationHelp => {
-                    let op = request
-                        .operation_id
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("operation_id is required"))?;
-                    let tools = session.transport.list_tools().await?;
-                    let tool = tools
-                        .into_iter()
-                        .find(|t| t.name == *op)
-                        .ok_or_else(|| UxcError::OperationNotFound(op.clone()))?;
-                    let detail = tool_to_operation_detail(tool);
-                    Ok((
-                        "operation_detail".to_string(),
-                        Some(op.clone()),
-                        serde_json::to_value(detail)?,
-                        reused,
-                    ))
-                }
-                RuntimeAction::Execute => {
-                    let op = request
-                        .operation_id
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("operation_id is required"))?;
-                    let args = request.args.clone().unwrap_or_default();
-                    let tools = session.transport.list_tools().await?;
-                    validate_mcp_tool_args(op, &tools, &args)?;
-                    let arguments = if args.is_empty() {
-                        None
-                    } else {
-                        Some(Value::Object(args.into_iter().collect()))
-                    };
-                    let result = session.transport.call_tool(op, arguments).await?;
-                    Ok((
-                        "call_result".to_string(),
-                        Some(op.clone()),
-                        convert_tool_content_to_value(&result.content),
-                        reused,
-                    ))
-                }
-            }
+            let result = session.transport.call_tool(op, arguments).await?;
+            Ok((
+                "call_result".to_string(),
+                Some(op.clone()),
+                convert_tool_content_to_value(&result.content),
+                reused,
+            ))
         }
     }
 }
@@ -793,7 +731,7 @@ pub async fn daemon_status_client() -> Result<DaemonStatus> {
 
 #[cfg(not(unix))]
 pub async fn daemon_status_client() -> Result<DaemonStatus> {
-    bail!("uxcd daemon is not supported on this platform")
+    bail!("uxcd daemon is not supported on this platform; run uxc inside WSL")
 }
 
 #[cfg(unix)]
@@ -804,7 +742,7 @@ pub async fn daemon_stop_client() -> Result<()> {
 
 #[cfg(not(unix))]
 pub async fn daemon_stop_client() -> Result<()> {
-    bail!("uxcd daemon is not supported on this platform")
+    bail!("uxcd daemon is not supported on this platform; run uxc inside WSL")
 }
 
 #[cfg(unix)]
@@ -818,12 +756,9 @@ pub async fn runtime_invoke_client(
 
 #[cfg(not(unix))]
 pub async fn runtime_invoke_client(
-    request: &RuntimeInvokeRequest,
+    _request: &RuntimeInvokeRequest,
 ) -> Result<RuntimeInvokeResponse> {
-    // Non-Unix platforms don't have Unix domain sockets. Execute in-process instead of
-    // attempting to IPC to a daemon.
-    let runtime = DaemonRuntime::new();
-    runtime.invoke(request.clone()).await
+    bail!("uxcd daemon is not supported on this platform; run uxc inside WSL")
 }
 
 #[cfg(unix)]
@@ -863,7 +798,7 @@ pub async fn ensure_daemon_running() -> Result<bool> {
 
 #[cfg(not(unix))]
 pub async fn ensure_daemon_running() -> Result<bool> {
-    bail!("uxcd daemon is not supported on this platform")
+    bail!("uxcd daemon is not supported on this platform; run uxc inside WSL")
 }
 
 #[cfg(unix)]
@@ -910,7 +845,7 @@ pub async fn run_daemon_server() -> Result<()> {
 
 #[cfg(not(unix))]
 pub async fn run_daemon_server() -> Result<()> {
-    bail!("uxcd daemon is not supported on this platform")
+    bail!("uxcd daemon is not supported on this platform; run uxc inside WSL")
 }
 
 #[cfg(unix)]
@@ -1240,6 +1175,72 @@ fn auth_fingerprint(profile: Option<&Profile>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn extract_user_data_dir(args: &[String]) -> Option<String> {
+    extract_user_data_dir_from_tokens(args)
+}
+
+fn extract_user_data_dir_from_stdio_cache_key(key: &str) -> Option<String> {
+    if !key.starts_with("stdio:") {
+        return None;
+    }
+    let rest = key.trim_start_matches("stdio:");
+    let (endpoint, _fingerprint) = rest.rsplit_once(':')?;
+    let tokens = adapters::mcp::transport::parse_command(endpoint);
+    extract_user_data_dir_from_tokens(&tokens)
+}
+
+fn extract_user_data_dir_from_tokens(tokens: &[String]) -> Option<String> {
+    // Flag shapes seen in MCP stdio servers (not shell-expanded):
+    //   --user-data-dir <path>
+    //   --user-data-dir=<path>
+    for (idx, tok) in tokens.iter().enumerate() {
+        if tok == "--user-data-dir" {
+            let next = tokens.get(idx + 1)?;
+            return Some(expand_tilde_path(next));
+        }
+        if let Some(value) = tok.strip_prefix("--user-data-dir=") {
+            return Some(expand_tilde_path(value));
+        }
+    }
+    None
+}
+
+fn expand_tilde_path(path: &str) -> String {
+    let Some(home) = resolve_home_dir_for_tilde() else {
+        return path.to_string();
+    };
+    if path == "~" {
+        return home.to_string_lossy().to_string();
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home.join(rest).to_string_lossy().to_string();
+    }
+    if let Some(rest) = path.strip_prefix("~\\") {
+        return home.join(rest).to_string_lossy().to_string();
+    }
+    path.to_string()
+}
+
+fn resolve_home_dir_for_tilde() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    {
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            return Some(PathBuf::from(profile));
+        }
+        let home_drive = std::env::var_os("HOMEDRIVE");
+        let home_path = std::env::var_os("HOMEPATH");
+        if let (Some(drive), Some(path)) = (home_drive, home_path) {
+            let mut combined = PathBuf::from(drive);
+            combined.push(path);
+            return Some(combined);
+        }
+    }
+    None
+}
+
 fn now_unix_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1442,15 +1443,16 @@ async fn invoke_with_adapter(
                 .iter()
                 .map(|op| to_operation_summary(protocol, op))
                 .collect::<Vec<_>>();
-            Ok((
-                "host_help".to_string(),
-                None,
-                json!({
-                    "operations": summaries,
-                    "count": summaries.len(),
-                    "examples": host_help_examples(request.options.link_name.as_deref()),
-                }),
-            ))
+            let service = host_help_service_summary(adapter, &request.endpoint).await?;
+            let mut payload = json!({
+                "operations": summaries,
+                "count": summaries.len(),
+                "examples": host_help_examples(request.options.link_name.as_deref()),
+            });
+            if let Some(service) = service {
+                payload["service"] = serde_json::to_value(service)?;
+            }
+            Ok(("host_help".to_string(), None, payload))
         }
         RuntimeAction::OperationHelp => {
             let op = request
@@ -1474,6 +1476,86 @@ async fn invoke_with_adapter(
             Ok(("call_result".to_string(), Some(op.clone()), result.data))
         }
     }
+}
+
+async fn host_help_service_summary(
+    adapter: &AdapterEnum,
+    endpoint: &str,
+) -> Result<Option<ServiceSummary>> {
+    if !matches!(adapter.protocol_type(), ProtocolType::Mcp) {
+        return Ok(None);
+    }
+
+    let schema = adapter.fetch_schema(endpoint).await?;
+    let name = schema
+        .get("serverInfo")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let description = schema
+        .get("instructions")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    if name.is_none() && description.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(ServiceSummary { name, description }))
+}
+
+async fn validate_execute_preflight(
+    adapter: &AdapterEnum,
+    request: &RuntimeInvokeRequest,
+) -> Result<()> {
+    if !matches!(request.action, RuntimeAction::Execute) {
+        return Ok(());
+    }
+    if !matches!(adapter.protocol_type(), ProtocolType::Mcp) {
+        return Ok(());
+    }
+
+    let op = request
+        .operation_id
+        .as_ref()
+        .ok_or_else(|| anyhow!("operation_id is required"))?;
+    let detail = match adapter.describe_operation(&request.endpoint, op).await {
+        Ok(detail) => detail,
+        Err(err) => {
+            tracing::debug!(
+                "Skip MCP execute preflight validation for {} due to operation schema lookup error: {}",
+                op,
+                err
+            );
+            return Ok(());
+        }
+    };
+    let args = request.args.as_ref();
+    let required = detail
+        .input_schema
+        .as_ref()
+        .and_then(|schema| schema.get("required"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let missing = required
+        .into_iter()
+        .filter(|key| !args.is_some_and(|provided| provided.contains_key(key)))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(UxcError::InvalidArguments(format!(
+        "Missing required arguments for MCP tool '{}': {}",
+        op,
+        missing.join(", ")
+    ))
+    .into())
 }
 
 fn to_operation_summary(protocol: &str, op: &Operation) -> OperationSummary {
@@ -1568,77 +1650,6 @@ impl Drop for SchemaMappingEnvGuard {
             None => std::env::remove_var("UXC_SCHEMA_MAPPINGS_FILE"),
         }
     }
-}
-
-fn tool_to_operation(tool: adapters::mcp::types::Tool) -> Operation {
-    let parameters = if let Some(schema) = tool.inputSchema {
-        parse_schema_to_parameters(&schema)
-    } else {
-        Vec::new()
-    };
-
-    Operation {
-        operation_id: tool.name.clone(),
-        display_name: tool.name.clone(),
-        description: Some(tool.description),
-        parameters,
-        return_type: Some("ToolContent".to_string()),
-    }
-}
-
-fn tool_to_operation_detail(tool: adapters::mcp::types::Tool) -> OperationDetail {
-    OperationDetail {
-        operation_id: tool.name.clone(),
-        display_name: tool.name,
-        description: Some(tool.description),
-        parameters: tool
-            .inputSchema
-            .as_ref()
-            .map(parse_schema_to_parameters)
-            .unwrap_or_default(),
-        return_type: Some("ToolContent".to_string()),
-        input_schema: tool.inputSchema,
-    }
-}
-
-fn parse_schema_to_parameters(schema: &Value) -> Vec<adapters::Parameter> {
-    let mut parameters = Vec::new();
-
-    if let Some(obj) = schema.as_object() {
-        if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
-            let required = obj
-                .get("required")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .collect::<std::collections::HashSet<_>>()
-                })
-                .unwrap_or_default();
-
-            for (name, prop_schema) in props {
-                let param_type = prop_schema
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
-                let description = prop_schema
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                parameters.push(adapters::Parameter {
-                    name: name.clone(),
-                    param_type,
-                    required: required.contains(name.as_str()),
-                    description,
-                });
-            }
-        }
-    }
-
-    parameters
 }
 
 fn convert_tool_content_to_value(content: &[adapters::mcp::types::ToolContent]) -> Value {
@@ -1758,46 +1769,6 @@ impl Default for DaemonRuntime {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn validate_mcp_tool_args(
-    operation: &str,
-    tools: &[adapters::mcp::types::Tool],
-    args: &HashMap<String, Value>,
-) -> Result<()> {
-    let tool = tools
-        .iter()
-        .find(|tool| tool.name == operation)
-        .ok_or_else(|| UxcError::OperationNotFound(operation.to_string()))?;
-
-    let required = tool
-        .inputSchema
-        .as_ref()
-        .and_then(|schema| schema.get("required"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    let missing = required
-        .into_iter()
-        .filter(|key| !args.contains_key(key))
-        .collect::<Vec<_>>();
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    Err(UxcError::InvalidArguments(format!(
-        "Missing required arguments for MCP tool '{}': {}",
-        operation,
-        missing.join(", ")
-    ))
-    .into())
 }
 
 #[cfg(unix)]
