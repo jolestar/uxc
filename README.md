@@ -219,6 +219,29 @@ uxc mcp.deepwiki.com/mcp -h
 uxc mcp.deepwiki.com/mcp ask_question repoName=holon-run/uxc question='What does this project do?'
 ```
 
+### MCP (stdio)
+
+UXC can also invoke MCP servers started as local processes over stdio.
+For stdio endpoints, the "URL" is a quoted command line.
+
+Playwright MCP (stdio) example:
+
+```bash
+# One-off discovery
+uxc "npx -y @playwright/mcp@latest --headless --isolated" -h
+
+# Create a stable command name for repeated use (recommended)
+uxc link playwright-mcp-cli "npx -y @playwright/mcp@latest --headless --isolated"
+playwright-mcp-cli -h
+
+# Inspect an operation before calling it
+playwright-mcp-cli browser_navigate -h
+
+# Call operations with key=value args
+playwright-mcp-cli browser_navigate url=https://example.com
+playwright-mcp-cli browser_snapshot
+```
+
 ### JSON-RPC
 
 ```bash
@@ -237,6 +260,7 @@ Use `uxc` skill as the shared execution layer, and add wrappers when they fit yo
 | `deepwiki` | Query repository documentation and ask codebase questions | [`skills/deepwiki/SKILL.md`](skills/deepwiki/SKILL.md) |
 | `context7` | Query up-to-date library documentation/examples over MCP | [`skills/context7/SKILL.md`](skills/context7/SKILL.md) |
 | `notion-mcp-skill` | Operate Notion MCP workflows with OAuth-aware guidance | [`skills/notion-mcp-skill/SKILL.md`](skills/notion-mcp-skill/SKILL.md) |
+| `playwright-mcp-skill` | Run `@playwright/mcp` over MCP stdio through `uxc` (browser automation) | [`skills/playwright-mcp-skill/SKILL.md`](skills/playwright-mcp-skill/SKILL.md) |
 
 See [`docs/skills.md`](docs/skills.md) for install methods and maintenance rules.
 
