@@ -130,7 +130,7 @@ jobs:
           for attempt in {1..3}; do
             echo "Attempt $attempt/3: Inspecting get:/store/inventory..."
             if OUTPUT=$($UXC https://petstore3.swagger.io/api/v3 get:/store/inventory -h 2>&1); then
-              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "openapi" and .kind == "operation_help" and .operation == "get:/store/inventory"' >/dev/null; then
+              if echo "$OUTPUT" | jq -e '.ok == true and .protocol == "openapi" and .kind == "operation_detail" and .operation == "get:/store/inventory"' >/dev/null; then
                 echo "✓ Operation help succeeded"
                 break
               else
