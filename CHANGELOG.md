@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-03
+
+### Added
+- Daemon exclusive state keys for MCP stdio session hand-off (`--daemon-exclusive` and `UXC_DAEMON_EXCLUSIVE`) to support safe process reuse/eviction across endpoints that share runtime state.
+- `uxc link` support for persisting daemon exclusive keys in generated launchers.
+
+### Changed
+- Help/inference global-arg normalization now treats `--daemon-exclusive` as a true global option across dynamic forms.
+- `UXC_DAEMON_EXCLUSIVE` parsing now avoids `C:\...` ambiguity on Windows by not using `:` splitting on native Windows.
+- `~\\...` is now expanded for daemon exclusive keys in addition to `~/...`.
+
+### Fixed
+- Improve daemon busy-conflict diagnostics for exclusive keys with redacted owner details.
+- Allow stale schema cache fallback in help flow when runtime invocation fails, improving resilience for degraded/offline targets.
+
+### Removed
+- Official Windows native support; UXC should be run through WSL on Windows hosts.
+
 ## [0.5.3] - 2026-03-02
 
 > Note: `v0.5.0`, `v0.5.1`, and `v0.5.2` were intermediate tags that were not released.
@@ -178,7 +196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/holon-run/uxc/releases/tag/v0.6.0
 [0.5.3]: https://github.com/holon-run/uxc/releases/tag/v0.5.3
 [0.4.2]: https://github.com/holon-run/uxc/releases/tag/v0.4.2
 [0.4.1]: https://github.com/holon-run/uxc/releases/tag/v0.4.1

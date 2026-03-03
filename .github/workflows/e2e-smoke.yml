@@ -100,24 +100,24 @@ jobs:
 
           echo "=== Testing OpenAPI endpoint: https://petstore3.swagger.io/api/v3 ==="
 
-          # List operations with retry
+          # Host help (operation discovery) with retry
           for attempt in {1..3}; do
-            echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$($UXC https://petstore3.swagger.io/api/v3 list 2>&1); then
-              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "operation_list" and any(.data.operations[]; .operation_id == "get:/store/inventory")' >/dev/null; then
-                echo "✓ List operations succeeded"
+            echo "Attempt $attempt/3: Fetching host help..."
+            if OUTPUT=$($UXC https://petstore3.swagger.io/api/v3 -h 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "host_help" and any(.data.operations[]; .operation_id == "get:/store/inventory")' >/dev/null; then
+                echo "✓ Host help succeeded"
                 break
               else
-                echo "✗ List operations returned unexpected output:"
+                echo "✗ Host help returned unexpected output:"
                 echo "$OUTPUT" | jq '.'
               fi
             else
-              echo "✗ List operations failed with exit code $?:"
+              echo "✗ Host help failed with exit code $?:"
               echo "$OUTPUT"
             fi
 
             if [[ "$attempt" -eq 3 ]]; then
-              echo "=== OpenAPI list test failed after 3 attempts ==="
+              echo "=== OpenAPI host help test failed after 3 attempts ==="
               echo "Last output:"
               echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
@@ -164,24 +164,24 @@ jobs:
 
           echo "=== Testing GraphQL endpoint: https://countries.trevorblades.com/ ==="
 
-          # List operations with retry
+          # Host help (operation discovery) with retry
           for attempt in {1..3}; do
-            echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$($UXC https://countries.trevorblades.com/ list 2>&1); then
-              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "query/country")' >/dev/null; then
-                echo "✓ List operations succeeded"
+            echo "Attempt $attempt/3: Fetching host help..."
+            if OUTPUT=$($UXC https://countries.trevorblades.com/ -h 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "host_help" and any(.data.operations[]; .operation_id == "query/country")' >/dev/null; then
+                echo "✓ Host help succeeded"
                 break
               else
-                echo "✗ List operations returned unexpected output:"
+                echo "✗ Host help returned unexpected output:"
                 echo "$OUTPUT" | jq '.'
               fi
             else
-              echo "✗ List operations failed with exit code $?:"
+              echo "✗ Host help failed with exit code $?:"
               echo "$OUTPUT"
             fi
 
             if [[ "$attempt" -eq 3 ]]; then
-              echo "=== GraphQL list test failed after 3 attempts ==="
+              echo "=== GraphQL host help test failed after 3 attempts ==="
               echo "Last output:"
               echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
@@ -228,24 +228,24 @@ jobs:
 
           echo "=== Testing gRPC endpoint: grpcb.in:9000 ==="
 
-          # List operations with retry
+          # Host help (operation discovery) with retry
           for attempt in {1..3}; do
-            echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$($UXC grpcb.in:9000 list 2>&1); then
-              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "addsvc.Add/Sum")' >/dev/null; then
-                echo "✓ List operations succeeded"
+            echo "Attempt $attempt/3: Fetching host help..."
+            if OUTPUT=$($UXC grpcb.in:9000 -h 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "host_help" and any(.data.operations[]; .operation_id == "addsvc.Add/Sum")' >/dev/null; then
+                echo "✓ Host help succeeded"
                 break
               else
-                echo "✗ List operations returned unexpected output:"
+                echo "✗ Host help returned unexpected output:"
                 echo "$OUTPUT" | jq '.'
               fi
             else
-              echo "✗ List operations failed with exit code $?:"
+              echo "✗ Host help failed with exit code $?:"
               echo "$OUTPUT"
             fi
 
             if [[ "$attempt" -eq 3 ]]; then
-              echo "=== gRPC list test failed after 3 attempts ==="
+              echo "=== gRPC host help test failed after 3 attempts ==="
               echo "Last output:"
               echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
@@ -291,24 +291,24 @@ jobs:
 
           echo "=== Testing MCP HTTP endpoint: https://mcp.deepwiki.com/mcp ==="
 
-          # List operations with retry
+          # Host help (operation discovery) with retry
           for attempt in {1..3}; do
-            echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp list 2>&1); then
-              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "read_wiki_structure")' >/dev/null; then
-                echo "✓ List operations succeeded"
+            echo "Attempt $attempt/3: Fetching host help..."
+            if OUTPUT=$($UXC https://mcp.deepwiki.com/mcp -h 2>&1); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "host_help" and any(.data.operations[]; .operation_id == "read_wiki_structure")' >/dev/null; then
+                echo "✓ Host help succeeded"
                 break
               else
-                echo "✗ List operations returned unexpected output:"
+                echo "✗ Host help returned unexpected output:"
                 echo "$OUTPUT" | jq '.'
               fi
             else
-              echo "✗ List operations failed with exit code $?:"
+              echo "✗ Host help failed with exit code $?:"
               echo "$OUTPUT"
             fi
 
             if [[ "$attempt" -eq 3 ]]; then
-              echo "=== MCP HTTP list test failed after 3 attempts ==="
+              echo "=== MCP HTTP host help test failed after 3 attempts ==="
               echo "Last output:"
               echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
@@ -355,24 +355,24 @@ jobs:
 
           echo "=== Testing MCP stdio with @modelcontextprotocol/server-filesystem ==="
 
-          # List operations with retry
+          # Host help (operation discovery) with retry
           for attempt in {1..3}; do
-            echo "Attempt $attempt/3: Listing operations..."
-            if OUTPUT=$("$UXC" "$MCP_STDIO" list); then
-              if echo "$OUTPUT" | jq -e '.ok == true and any(.data.operations[]; .operation_id == "list_directory")' >/dev/null; then
-                echo "✓ List operations succeeded"
+            echo "Attempt $attempt/3: Fetching host help..."
+            if OUTPUT=$("$UXC" "$MCP_STDIO" -h); then
+              if echo "$OUTPUT" | jq -e '.ok == true and .kind == "host_help" and any(.data.operations[]; .operation_id == "list_directory")' >/dev/null; then
+                echo "✓ Host help succeeded"
                 break
               else
-                echo "✗ List operations returned unexpected output:"
+                echo "✗ Host help returned unexpected output:"
                 echo "$OUTPUT" | jq '.'
               fi
             else
-              echo "✗ List operations failed with exit code $?:"
+              echo "✗ Host help failed with exit code $?:"
               echo "${OUTPUT:-<empty stdout>}"
             fi
 
             if [[ "$attempt" -eq 3 ]]; then
-              echo "=== MCP stdio list test failed after 3 attempts ==="
+              echo "=== MCP stdio host help test failed after 3 attempts ==="
               echo "Last output:"
               echo "$OUTPUT" | jq '.' || echo "$OUTPUT"
               exit 1
