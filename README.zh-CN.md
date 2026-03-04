@@ -281,6 +281,27 @@ UXC 提供一个标准 skill（`uxc`）和若干官方场景化 wrapper skill。
 | `notion-mcp-skill` | 提供带 OAuth 说明的 Notion MCP 流程指引 | [`skills/notion-mcp-skill/SKILL.md`](skills/notion-mcp-skill/SKILL.md) |
 | `playwright-mcp-skill` | 通过 `uxc` 在 MCP stdio 上运行 `@playwright/mcp`（浏览器自动化） | [`skills/playwright-mcp-skill/SKILL.md`](skills/playwright-mcp-skill/SKILL.md) |
 
+### Skill 安装方式
+
+使用 `npx skills` 从本仓库安装：
+
+```bash
+# 给 Codex 安装基础能力 skill（推荐先装）
+npx -y skills@latest add holon-run/uxc --skill uxc --agent codex -y
+
+# 按需安装场景化 wrapper
+npx -y skills@latest add holon-run/uxc --skill playwright-mcp-skill --skill okx-mcp-skill --agent codex -y
+```
+
+使用 ClawHub 安装已发布的 skill：
+
+```bash
+# 安装到 ~/.openclaw/skills/<slug>
+clawhub --workdir ~/.openclaw --dir skills install uxc
+clawhub --workdir ~/.openclaw --dir skills install playwright-mcp-skill
+clawhub --workdir ~/.openclaw --dir skills install okx-mcp-skill
+```
+
 安装和维护规则见 [`docs/skills.md`](docs/skills.md)。
 
 ## 输出与帮助约定

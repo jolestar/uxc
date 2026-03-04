@@ -283,6 +283,27 @@ Use `uxc` skill as the shared execution layer, and add wrappers when they fit yo
 | `notion-mcp-skill` | Operate Notion MCP workflows with OAuth-aware guidance | [`skills/notion-mcp-skill/SKILL.md`](skills/notion-mcp-skill/SKILL.md) |
 | `playwright-mcp-skill` | Run `@playwright/mcp` over MCP stdio through `uxc` (browser automation) | [`skills/playwright-mcp-skill/SKILL.md`](skills/playwright-mcp-skill/SKILL.md) |
 
+### Install Skills
+
+Install from this repository using `npx skills`:
+
+```bash
+# Install canonical base skill for Codex
+npx -y skills@latest add holon-run/uxc --skill uxc --agent codex -y
+
+# Install wrappers as needed
+npx -y skills@latest add holon-run/uxc --skill playwright-mcp-skill --skill okx-mcp-skill --agent codex -y
+```
+
+Install published skills from ClawHub:
+
+```bash
+# Install into ~/.openclaw/skills/<slug>
+clawhub --workdir ~/.openclaw --dir skills install uxc
+clawhub --workdir ~/.openclaw --dir skills install playwright-mcp-skill
+clawhub --workdir ~/.openclaw --dir skills install okx-mcp-skill
+```
+
 See [`docs/skills.md`](docs/skills.md) for install methods and maintenance rules.
 
 ## Output and Help Conventions
