@@ -20,6 +20,12 @@ This project uses tag-based automated releases.
 ./scripts/release-check.sh vX.Y.Z
 ```
 
+If you intentionally run checks before committing version/changelog changes, use:
+
+```bash
+./scripts/release-check.sh vX.Y.Z --allow-dirty
+```
+
 5. Commit and merge to `main`.
 
 ## Trigger a Release

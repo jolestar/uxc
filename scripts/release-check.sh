@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-EXPECTED_TAG="${1:-}"
+EXPECTED_TAG=""
+ALLOW_DIRTY=false
 
 usage() {
   cat <<'USAGE'
 Run pre-release checks.
 
 Usage:
-  release-check.sh [vX.Y.Z]
-  release-check.sh refs/tags/vX.Y.Z
+  release-check.sh [vX.Y.Z|refs/tags/vX.Y.Z] [--allow-dirty]
 USAGE
 }
 
@@ -24,16 +24,36 @@ need_cmd() {
 }
 
 main() {
-  if [[ "${EXPECTED_TAG}" == "-h" || "${EXPECTED_TAG}" == "--help" ]]; then
-    usage
-    exit 0
-  fi
+  for arg in "$@"; do
+    case "${arg}" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --allow-dirty)
+        ALLOW_DIRTY=true
+        ;;
+      -*)
+        fail "unknown option: ${arg}"
+        ;;
+      *)
+        if [[ -n "${EXPECTED_TAG}" ]]; then
+          fail "unexpected extra positional argument: ${arg}"
+        fi
+        EXPECTED_TAG="${arg}"
+        ;;
+    esac
+  done
 
   need_cmd cargo
   need_cmd git
 
   if ! git diff --quiet || ! git diff --cached --quiet; then
-    fail "working tree is not clean"
+    if [[ "${ALLOW_DIRTY}" == "true" ]]; then
+      printf '[release-check] warn: working tree is not clean (allowed by --allow-dirty)\n' >&2
+    else
+      fail "working tree is not clean"
+    fi
   fi
 
   local version
@@ -59,4 +79,4 @@ main() {
   printf '[release-check] OK: version=%s\n' "${version}"
 }
 
-main
+main "$@"

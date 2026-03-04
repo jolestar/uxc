@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-04
+
+### Fixed
+- Stabilized local E2E MCP tests by isolating test `HOME` so daemon state/socket conflicts from external runs do not cause release CI flakes.
+- Kept test `HOME` path short (`/tmp/...`) to avoid Unix domain socket path length failures when daemon starts in tests.
+
 ## [0.7.0] - 2026-03-04
 
 ### Added
@@ -206,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/holon-run/uxc/releases/tag/v0.7.1
 [0.7.0]: https://github.com/holon-run/uxc/releases/tag/v0.7.0
 [0.6.0]: https://github.com/holon-run/uxc/releases/tag/v0.6.0
 [0.5.3]: https://github.com/holon-run/uxc/releases/tag/v0.5.3
