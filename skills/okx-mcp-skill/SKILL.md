@@ -93,8 +93,8 @@ Always prefer runtime discovery (`dex-okx-market-price-chains` / `dex-okx-dex-ag
 - `okx-mcp-cli <operation> ...` is equivalent to `uxc https://web3.okx.com/api/v1/onchainos-mcp <operation> ...`.
 - If call result contains `Request header OK-ACCESS-KEY can not be empty`:
   - confirm auth binding matches endpoint with `uxc auth binding match https://web3.okx.com/api/v1/onchainos-mcp`
-  - confirm credential has a secret source (`--secret-env` or `--secret-op`)
-  - note current `uxc auth-type api_key` sends `x-api-key`; if your OKX environment strictly requires `OK-ACCESS-KEY`, use an HTTP gateway/proxy that rewrites `x-api-key` to `OK-ACCESS-KEY`.
+  - confirm credential uses `--api-key-header OK-ACCESS-KEY` when setting up credential
+  - confirm credential has a secret source (`--secret-env`, `--secret-op`, or literal `--secret`)
 - For high-impact operations require explicit user confirmation:
   - `dex-okx-dex-approve-transaction`
   - `dex-okx-dex-swap`
