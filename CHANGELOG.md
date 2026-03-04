@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-04
+
+### Added
+- MCP `call_result` output now includes `structuredContent` to preserve structured tool responses for downstream agents.
+- Unified `okx-mcp-skill` with trial-key guidance and reusable usage patterns for market/onchain workflows.
+
+### Changed
+- API key auth now supports configurable header names (for example `OK-ACCESS-KEY`) instead of only `x-api-key`.
+- Skill catalog/docs updated with renamed MCP wrapper skills and publish status notes.
+
 ## [0.6.0] - 2026-03-03
 
 ### Added
@@ -196,7 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/holon-run/uxc/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/holon-run/uxc/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/holon-run/uxc/releases/tag/v0.7.0
 [0.6.0]: https://github.com/holon-run/uxc/releases/tag/v0.6.0
 [0.5.3]: https://github.com/holon-run/uxc/releases/tag/v0.5.3
 [0.4.2]: https://github.com/holon-run/uxc/releases/tag/v0.4.2
