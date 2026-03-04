@@ -1,0 +1,4 @@
+interface:
+  display_name: "OKX MCP"
+  short_description: "Token, market, wallet, and swap via OKX MCP"
+  default_prompt: "Use $okx-mcp-skill to run OKX MCP workflows for token discovery, market data, wallet balance, and swap planning/execution with help-first schema inspection and safe auth handling."
