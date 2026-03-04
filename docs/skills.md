@@ -88,3 +88,10 @@ bash skills/notion-mcp-skill/scripts/validate.sh
 clawhub publish skills/context7-mcp-skill --slug context7-mcp-skill --name "Context7 MCP Skill" --version 1.0.0
 clawhub publish skills/deepwiki-mcp-skill --slug deepwiki-mcp-skill --name "DeepWiki MCP Skill" --version 1.0.0
 ```
+
+## ClawHub Publish Log (2026-03-04)
+
+- `clawhub whoami`: `jolestar`
+- Published (1.0.0):
+  - `okx-mcp-skill`
+  - command: `clawhub publish skills/okx-mcp-skill --slug okx-mcp-skill --name "OKX MCP Skill" --version 1.0.0`
