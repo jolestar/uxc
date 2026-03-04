@@ -2,6 +2,8 @@
 
 **Universal X-Protocol CLI**
 
+English | [简体中文](README.zh-CN.md)
+
 [![CI](https://github.com/holon-run/uxc/workflows/CI/badge.svg)](https://github.com/holon-run/uxc/actions)
 [![Coverage](https://github.com/holon-run/uxc/workflows/Coverage/badge.svg)](https://github.com/holon-run/uxc/actions/workflows/coverage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -69,17 +71,33 @@ Supported protocols:
 
 UXC keeps protocol diversity behind one execution contract:
 
-```text
-User / Skill / Agent
-        ↓
-      UXC CLI
-        ↓
- Protocol Detector
-        ↓
-   Adapter Layer
- (OpenAPI/gRPC/GraphQL/MCP/JSON-RPC)
-        ↓
-  Remote Endpoint
+```mermaid
+flowchart LR
+    A[User / Skill / Agent] --> B[UXC CLI]
+    B --> C[Command Router]
+    C --> D[Protocol Detector]
+    D --> E[Adapter Layer]
+
+    E --> E1[OpenAPI Adapter]
+    E --> E2[gRPC Adapter]
+    E --> E3[GraphQL Adapter]
+    E --> E4[MCP Adapter]
+    E --> E5[JSON-RPC Adapter]
+
+    C --> F[Auth Resolver]
+    F --> F1[Credential Sources<br/>literal / env / 1Password]
+    C --> G[Schema + Response Cache]
+    C --> H[JSON Envelope Output]
+
+    E1 --> R[Remote Endpoints]
+    E2 --> R
+    E3 --> R
+    E5 --> R
+    E4 --> M1[MCP HTTP Endpoint]
+    E4 --> M2[MCP stdio via Daemon]
+
+    M2 --> D1[Daemon Process Registry]
+    D1 --> D2[Reused stdio MCP Process]
 ```
 
 This design keeps invocation UX stable while allowing protocol-specific internals.
