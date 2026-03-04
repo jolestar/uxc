@@ -121,8 +121,10 @@ pub fn start_test_server(protocol: &str, scenario: &str) -> TestServerHandle {
 /// Run uxc command and check result
 pub fn run_uxc(args: &[&str]) -> Result<String, String> {
     let uxc = uxc_binary();
+    let test_home = test_home_dir();
     let output = Command::new(&uxc)
         .args(args)
+        .env("HOME", &test_home)
         .output()
         .map_err(|e| format!("Failed to run uxc: {}", e))?;
 
@@ -139,4 +141,16 @@ pub fn run_uxc(args: &[&str]) -> Result<String, String> {
             stderr
         ))
     }
+}
+
+fn test_home_dir() -> PathBuf {
+    static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
+    TEST_HOME
+        .get_or_init(|| {
+            // Keep HOME path short to avoid Unix socket path length limits for daemon socket.
+            let dir = PathBuf::from(format!("/tmp/uxc-test-home-{}", std::process::id()));
+            fs::create_dir_all(&dir).expect("Failed to create test HOME");
+            dir
+        })
+        .clone()
 }
