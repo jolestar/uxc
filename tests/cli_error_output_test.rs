@@ -102,3 +102,51 @@ fn no_cache_and_refresh_schema_conflict_returns_invalid_argument() {
     assert!(message.contains("--no-cache"));
     assert!(message.contains("--refresh-schema"));
 }
+
+#[test]
+fn unknown_double_dash_arg_returns_invalid_argument_with_helpful_hint() {
+    let output = uxc()
+        .arg("http://127.0.0.1:9")
+        .arg("test-operation")
+        .arg("--unknown-param=value")
+        .assert()
+        .failure();
+
+    let stdout = output.get_output().stdout.clone();
+    let json: serde_json::Value =
+        serde_json::from_slice(&stdout).expect("stdout should be valid JSON");
+
+    assert_eq!(json["ok"], false, "ok should be false");
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    let message = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("Unknown argument"));
+    assert!(message.contains("--unknown-param"));
+    assert!(message.contains("test-operation"));
+    // Verify the helpful hint is included
+    assert!(message.contains("key=value format (recommended)"));
+    assert!(message.contains("uxc <host> test-operation key1=value1"));
+}
+
+#[test]
+fn invalid_positional_arg_returns_invalid_argument_with_helpful_hint() {
+    let output = uxc()
+        .arg("http://127.0.0.1:9")
+        .arg("test-operation")
+        .arg("not-an-object")
+        .arg("also-invalid")
+        .assert()
+        .failure();
+
+    let stdout = output.get_output().stdout.clone();
+    let json: serde_json::Value =
+        serde_json::from_slice(&stdout).expect("stdout should be valid JSON");
+
+    assert_eq!(json["ok"], false, "ok should be false");
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    let message = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("Unknown argument"));
+    // Verify the helpful hint includes JSON example
+    assert!(message.contains("positional argument"));
+    assert!(message.contains(r#"key1":"value1"#));
+    assert!(message.contains(r#"key2":"value2"#));
+}

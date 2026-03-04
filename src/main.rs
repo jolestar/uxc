@@ -1751,6 +1751,14 @@ fn resolve_endpoint_command(cli: &Cli) -> Result<EndpointCommand> {
     }
 }
 
+/// Build a helpful error message for invalid operation arguments
+fn build_invalid_arg_error(arg: &str, operation_id: &str) -> String {
+    format!(
+        "Unknown argument '{}' for operation '{}'.\n\nHint: Use key=value format (recommended):\n  uxc <host> {} key1=value1 key2=value2\n\nOr pass JSON as positional argument:\n  uxc <host> {} '{{\"key1\":\"value1\",\"key2\":\"value2\"}}'",
+        arg, operation_id, operation_id, operation_id
+    )
+}
+
 fn parse_external_command(tokens: &[String], global_help: bool) -> Result<EndpointCommand> {
     if tokens.is_empty() {
         return Err(UxcError::InvalidArguments("Operation ID is required".to_string()).into());
@@ -1793,9 +1801,9 @@ fn parse_external_command(tokens: &[String], global_help: bool) -> Result<Endpoi
                 positional.push(token.to_string());
             }
             unknown => {
-                return Err(UxcError::InvalidArguments(format!(
-                    "Unknown argument '{}' for operation '{}'. Use key=value arguments, a positional JSON object payload, or --input-json",
-                    unknown, operation_id
+                return Err(UxcError::InvalidArguments(build_invalid_arg_error(
+                    unknown,
+                    &operation_id,
                 ))
                 .into());
             }
@@ -1829,11 +1837,9 @@ fn normalize_operation_inputs(
         }
 
         if token.starts_with('-') {
-            return Err(UxcError::InvalidArguments(format!(
-                "Unknown argument '{}' for operation '{}'. Use key=value arguments, a positional JSON object payload, or --input-json",
-                token, operation_id
-            ))
-            .into());
+            return Err(
+                UxcError::InvalidArguments(build_invalid_arg_error(token, operation_id)).into(),
+            );
         }
 
         if bare_json_payload.is_some() {
@@ -1845,10 +1851,7 @@ fn normalize_operation_inputs(
         }
 
         let parsed = serde_json::from_str::<Value>(token).map_err(|_| {
-            UxcError::InvalidArguments(format!(
-                "Unknown argument '{}' for operation '{}'. Use key=value arguments, a positional JSON object payload, or --input-json",
-                token, operation_id
-            ))
+            UxcError::InvalidArguments(build_invalid_arg_error(token, operation_id))
         })?;
 
         if !parsed.is_object() {
