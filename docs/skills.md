@@ -95,3 +95,7 @@ clawhub publish skills/deepwiki-mcp-skill --slug deepwiki-mcp-skill --name "Deep
 - Published (1.0.0):
   - `okx-mcp-skill`
   - command: `clawhub publish skills/okx-mcp-skill --slug okx-mcp-skill --name "OKX MCP Skill" --version 1.0.0`
+- Published (1.0.1):
+  - `okx-mcp-skill`
+  - reason: auth setup docs now require `--api-key-header OK-ACCESS-KEY` in initial credential command.
+  - command: `clawhub publish skills/okx-mcp-skill --slug okx-mcp-skill --name "OKX MCP Skill" --version 1.0.1`
