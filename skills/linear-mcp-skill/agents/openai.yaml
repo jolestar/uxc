@@ -1,0 +1,21 @@
+# OpenAI Agent Configuration for Linear MCP Skill
+
+When using this skill with OpenAI-compatible agents:
+
+## Capabilities
+- Query issues, teams, projects
+- Create, update, archive issues
+- Add comments
+
+## Usage
+```bash
+# List issues
+linear-mcp-cli query/issues first=10
+
+# Create issue
+linear-mcp-cli mutation/issueCreate '{"issueCreateInput":{"teamId":"TEAM_ID","title":"New issue"}}'
+```
+
+## Auth Note
+- Use bearer token (API key) or OAuth
+- Set with: uxc auth credential set linear-mcp --auth-type bearer --secret-env LINEAR_API_KEY
