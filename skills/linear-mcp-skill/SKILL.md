@@ -54,12 +54,14 @@ Linear supports two authentication methods:
 
 1. Use fixed link command by default:
    - `command -v linear-mcp-cli`
+   - If the command exists, confirm it is the expected `uxc link` for this skill before using it.
+   - If a command conflict is detected and cannot be safely reused, stop and ask skill maintainers for guidance instead of dynamically renaming the command.
    - If missing, create it: `uxc link linear-mcp-cli https://api.linear.app/graphql`
    - `linear-mcp-cli -h`
 
 2. Discover operations:
    - `linear-mcp-cli -h`
-   - Returns 471 GraphQL operations
+   - Returns hundreds of GraphQL operations
 
 3. Inspect specific operation:
    - `linear-mcp-cli query/issues -h`
