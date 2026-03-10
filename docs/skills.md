@@ -13,6 +13,8 @@ This repository ships one canonical skill for UXC (Universal X-Protocol CLI) and
   - Wrapper for Context7 MCP library documentation workflows.
 - `skills/okx-mcp-skill`
   - Unified wrapper for OKX MCP workflows (token/market/wallet/swap).
+- `skills/lifi-mcp-skill`
+  - Wrapper for LI.FI MCP workflows (cross-chain discovery/quote/status).
 - `skills/notion-mcp-skill`
   - Wrapper for Notion MCP workflows with OAuth and guarded-write guidance.
 - `skills/uxc-skill-creator`
@@ -43,7 +45,7 @@ python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github
   --path skills/deepwiki-mcp-skill
 ```
 
-Replace `skills/deepwiki-mcp-skill` with `skills/context7-mcp-skill`, `skills/okx-mcp-skill`, or `skills/notion-mcp-skill` as needed.
+Replace `skills/deepwiki-mcp-skill` with `skills/context7-mcp-skill`, `skills/okx-mcp-skill`, `skills/lifi-mcp-skill`, or `skills/notion-mcp-skill` as needed.
 
 After installation, restart Codex to load new skills.
 
